@@ -1,0 +1,35 @@
+# 事件驅動模式的長駐 process：Master Agent + 每個 step 一個 worker。
+#
+# 刻意跟 Procfile 分開，不是懶得合併：
+#   1. 同步模式（workflows/simple_pipeline.py）用不到這些 process。
+#   2. 更重要的是 orchestrator/smoke_test.py 與 workflows/parity_check.py
+#      會在自己的 process 內起 master/worker，consumer_group 跟這裡完全同名
+#      （event_bus 的 competing consumers 設計）。如果這批 process 在背景跑著，
+#      它們會跟測試搶同一批命令——測試裡刻意用假 handler 的情境
+#      （needs_review_short_circuit 的 guard_check_handler、
+#      worker_crash_recovery 的 failing_stt_handler）就會被真 handler 接走，
+#      測試結果變得不可信。跑 smoke test 前務必先關掉這個 Procfile。
+#
+# 啟動（Procfile 那批常駐服務要先起來，worker 會打 agent 的 8003~8005）：
+#   uv run honcho -f Procfile.workers start
+#
+# step 名單是示範場景 stt_check_notify 的，跟
+# workflows/definitions/stt_check_notify.yaml 對應。平台之後支援多 workflow 時，
+# 這份清單應該由 workflow 定義檔產生，而不是每個場景手寫一份。
+#
+# 三個 step 各自一個 process（註解掉的寫法）vs. 一個 process 跑全部 step
+# （worker-all，下面啟用的寫法）：topic/consumer_group/搶單完全不變，純粹是連線數
+# 換 blast radius 的取捨——worker-all 少開幾條連線，但一掛三個 step 一起停。
+# 2026-08-04 切換成 worker-all：docs/event-bus-connection-reduction-plan.md
+# 補充章節實測過，同樣接上 memory-writer 時 worker-all 比三個獨立 process 省
+# 5 條常駐連線（17 -> 12）。之後要單獨擴充某個瓶頸 step 時，兩種寫法可以並存：
+# 跟 worker-all 一起再起一個單 step process，SKIP LOCKED 會自動分工，不會
+# 重複處理同一則命令。
+
+master:          uv run python -m workflows.event_driven_pipeline --role master
+worker-all:      uv run python -m workflows.event_driven_pipeline --role worker --step all
+memory-writer:   uv run python -m workflows.event_driven_pipeline --role memory-writer
+
+# worker-stt:      uv run python -m workflows.event_driven_pipeline --role worker --step stt
+# worker-check:    uv run python -m workflows.event_driven_pipeline --role worker --step check
+# worker-notified: uv run python -m workflows.event_driven_pipeline --role worker --step notified

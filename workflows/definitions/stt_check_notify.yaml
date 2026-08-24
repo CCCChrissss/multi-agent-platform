@@ -1,0 +1,88 @@
+# Declarative definition of today's demo workflow (see workflows/simple_pipeline.py
+# for the in-process/synchronous version of the same sequence). Loaded by
+# orchestrator/workflow_def.py -- the orchestrator engine never hardcodes step
+# names or event types, only reads them from files like this one.
+#
+# input_schema/output_schema are each step's half of the agent API contract
+# (docs/agent-api-contract.md) -- JSON Schema (draft 2020-12) for the command
+# payload a step accepts and the result its handler must produce, enforced by
+# orchestrator/workflow_def.py's StepDef.validate_input/validate_output.
+# additionalProperties: false is deliberate: an agent silently returning an
+# extra field is exactly the kind of drift schema validation exists to catch.
+name: stt_check_notify
+steps:
+  - name: stt
+    command_type: stt.run
+    completion_type: stt.completed
+    input_schema:
+      type: object
+      required: [audio_ref]
+      properties:
+        audio_ref: {type: string, minLength: 1}
+      additionalProperties: false
+    output_schema:
+      type: object
+      required: [transcript]
+      properties:
+        transcript: {type: string}
+      additionalProperties: false
+  - name: check
+    command_type: check.run
+    completion_type: check.completed
+    input_schema:
+      type: object
+      required: [transcript]
+      properties:
+        transcript: {type: string}
+      additionalProperties: false
+    output_schema:
+      type: object
+      required: [mentions_tsmc]
+      properties:
+        mentions_tsmc: {type: boolean}
+        # should_notify/subject/body are optional here (not required) so
+        # agents/check/server.py -- the generic "does this mention TSMC"
+        # HTTP contract, unchanged by docs/exclusion-scenario-plan.md P0 --
+        # still validates with just {mentions_tsmc}. The event-driven path's
+        # scenario glue (workflows/event_driven_pipeline.py's check_handler)
+        # derives these three and forwards them to `notified`, which no
+        # longer accepts a bare `mentions_tsmc` (see notified.input_schema
+        # below) -- keeping the TSMC-specific "should_notify = mentions_tsmc"
+        # rule out of the platform-generic notify agent.
+        should_notify: {type: boolean}
+        subject: {type: string}
+        body: {type: string}
+      additionalProperties: false
+    # docs/long-term-memory-plan.md M3: distill each successful judgment into
+    # episodic memory under (workflow_name, step_name) = (stt_check_notify,
+    # check) -- the exact scope llm/tsmc_judge.py's _MEMORY_SCOPE already
+    # reads via recall_episodic_few_shot(). tenant omitted -> defaults to
+    # "default" (orchestrator/workflow_def.py), matching every current caller.
+    memory:
+      write:
+        - input_field: transcript
+          output_fields: [mentions_tsmc]
+  - name: notified
+    command_type: notified.run
+    completion_type: notified.completed
+    # Scenario-agnostic on purpose (docs/exclusion-scenario-plan.md §3.5/P0):
+    # `notified` only knows "send or don't, with this subject/body" --
+    # *whether* to notify is a scenario judgment call that belongs to
+    # whichever step produces should_notify (here, `check`'s event-driven
+    # glue), not to the delivery agent itself.
+    input_schema:
+      type: object
+      required: [should_notify, subject, body]
+      properties:
+        should_notify: {type: boolean}
+        subject: {type: string}
+        body: {type: string}
+      additionalProperties: false
+    output_schema:
+      type: object
+      required: [notified_log]
+      properties:
+        notified_log:
+          type: array
+          items: {type: string}
+      additionalProperties: false

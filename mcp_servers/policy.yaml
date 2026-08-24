@@ -1,0 +1,108 @@
+# MCP gateway access policy -- the single source of truth for which agent
+# (principal) may see and call which tools. Future no-code UI edits this file.
+#
+# Hybrid RBAC: a principal may reuse a `role` (a named tool bundle), grant
+# tools directly with `allow`, or attach a role and carve out with `deny`.
+# Resolution: expand roles -> union all allow -> subtract deny. deny wins.
+# Tool names are namespaced `<server>__<tool>`; `<server>__*` allows the
+# whole server.
+
+servers: # the gateway launches each of these once, up front
+  stt:      {module: mcp_servers.stt.server}
+  format:   {module: mcp_servers.format_check.server}
+  lookup:   {module: mcp_servers.lookup.server}
+  notified: {module: mcp_servers.notified.server}
+  memory:   {module: mcp_servers.memory.server}
+
+roles: # reusable tool bundles
+  transcriber: {allow: ["stt__*", "format__*"]}
+  reader:      {allow: ["lookup__*"]}
+  notifier:    {allow: ["notified__*"], deny: ["notified__send_slack_message"]}
+
+principals: # agent/node -> what it may use
+  stt:      {roles: [transcriber]}
+  # bespoke allow alongside a role (docs/exclusion-scenario-plan.md P2, same
+  # pattern as `notified` below from M4.5): browse is `check`-specific for
+  # now, not worth a new role for one principal.
+  check:    {roles: [reader], allow: ["memory__browse_semantic_memory"]}
+  # bespoke allow alongside a role (docs/long-term-memory-plan.md M4.5): the
+  # memory-recall tool is `notified`-specific for now, not worth a new role
+  # for one principal.
+  notified: {roles: [notifier], allow: ["memory__recall_semantic_memory"]}
+  # Examples of the other two shapes:
+  # some_agent:  {allow: ["lookup__query_company_profile"]}   # bespoke, no role
+  # other_agent: {roles: [notifier], deny: ["notified__send_slack_message"]}  # role minus one
+
+memory: # principal -> which long-term memory namespace patterns it may read/write
+  # STATUS: exploratory / provisional -- NOT signed off yet. Pending an
+  # internal discussion on the actual access-control model (see TODO.md's
+  # "記憶的存取治理還沒定案"). Default posture is "don't extend this
+  # section" -- treat everything below as "proven the mechanism works", not
+  # "this is the approved model". The `eval`/`distiller` grants below are
+  # the exception, not a reopening of that default: each is dated,
+  # attributed to an explicit user go-ahead, and scoped no wider than the
+  # feature it unblocks -- see each grant's own comment. Any further
+  # extension needs the same explicit go-ahead, not a precedent argument
+  # from these two.
+  #
+  # (see persistence/memory_policy.py). Namespace is `tenant/kind/*scope`,
+  # `*` matches any run of characters (including `/`). Read-only by default:
+  # scenario agents recall, they don't write on their own hot path (§3.7).
+  #
+  # episodic/procedural scope is `(workflow_name, step_name)` -- the workflow
+  # segment is wildcarded below (not pinned to `stt_check_notify`) because a
+  # principal here is an agent/step identity (current_node_name), reused
+  # verbatim across whichever workflow's YAML happens to invoke it (e.g. a
+  # `check` step in a future workflow is the same judgment task, not a
+  # different one that coincidentally shares a name) -- so its accumulated
+  # episodic/procedural memory should follow the role, not one workflow.
+  # If a future step ever reuses this name for a genuinely unrelated task,
+  # give it a different principal name instead of relying on this wildcard.
+  #
+  # The tenant segment (the first `/`-part) is NOT wildcarded, unlike the
+  # workflow segment above -- tenant is the isolation boundary
+  # (docs/long-term-memory-plan.md §5 risk 3), so a pattern must name a
+  # tenant explicitly. `_global` is the one reserved tenant_id for knowledge
+  # that genuinely isn't tenant-specific (e.g. a company's public aliases,
+  # unlike a per-tenant recipient's notification preference) -- see
+  # persistence/memory.py's GLOBAL_TENANT.
+  check:
+    read:
+      - "default/episodic/*/check"
+      - "default/procedural/*/check"
+      - "_global/semantic/company/*"
+      # docs/exclusion-scenario-plan.md P2: lets `check` browse()/recall()
+      # into an insurance product's policy-document tree seeded by P3's
+      # scripts/seed_insurance_memory.py -- same GLOBAL_TENANT category as
+      # company/* above (shared knowledge, not per-tenant).
+      - "_global/semantic/insurance_product/*"
+      # docs/knowledge-distillation-plan.md §4.3 approach 3 / P3 #2: lets
+      # evals/run_eval.py's --tenant eval runs exercise the real
+      # judge_exclusion() -> inject_procedural() path against a staged
+      # candidate rule (scripts/stage_candidate_for_eval.py writes it here
+      # as active) without touching `default`'s production procedural memory.
+      # No eval/episodic/*/check grant: P5 removed episodic few-shot
+      # injection from judge_exclusion() entirely, so `tenant` no longer
+      # touches episodic memory at all -- nothing to stage there anymore.
+      - "eval/procedural/*/check"
+    write: []
+  notified:
+    read:  ["default/semantic/recipient/*"]
+    write: []
+  memory_writer: # the only principal allowed to write -- the background distiller (M3)
+    read:  ["*"]  # the trusted distiller genuinely needs cross-tenant read/write, unlike scenario agents above
+    write: ["*/episodic/*", "*/procedural/*", "*/semantic/*"]
+  distiller: # P2's episodic -> candidate-procedural-rule generator
+    # (docs/knowledge-distillation-plan.md §3). Explicit user go-ahead
+    # 2026-08-10 to hardcode this despite the section still being frozen
+    # pending the real access-control decision -- see TODO.md's
+    # memory-policy-pending for the precedent (M2/M4.5 got the same
+    # exception). Scoped to the `default` tenant only, narrower than
+    # memory_writer's full wildcard above -- nothing yet needs it wider,
+    # and this principal only ever writes `status="pending"` (persistence/
+    # memory.py's remember()), so a scoping mistake here can't leak an
+    # active memory, only a not-yet-visible candidate.
+    read:
+      - "default/episodic/*/*"
+      - "default/procedural/*/*"
+    write: ["default/procedural/*/*"]

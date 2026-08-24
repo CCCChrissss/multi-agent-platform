@@ -1,0 +1,100 @@
+# Second demo workflow (docs/exclusion-scenario-plan.md): same stt -> check ->
+# notified shape as stt_check_notify.yaml, different check judgment --
+# instead of "does the transcript mention TSMC", check here decides "does
+# the customer's described situation fall under one of the policy's
+# exclusion clauses" by walking the insurance-product knowledge tree seeded
+# by scripts/seed_insurance_memory.py (llm/exclusion_judge.py, P4) instead
+# of anything injected into its prompt.
+#
+# input_schema/output_schema follow the same agent API contract as
+# stt_check_notify.yaml -- see that file's header comment.
+#
+# `memory: write` on `check` below distills every `status: "ok"` verdict
+# into episodic memory (status="pending", docs/knowledge-distillation-plan.md
+# P5), same mechanism as stt_check_notify.yaml. This scenario's "correct
+# answer" is a legal judgment call, more subjective than a TSMC name match,
+# and TODO.md's needs-review-decision-entry gap means there's still no
+# human-adjudication signal to filter on at write time -- a
+# wrong-but-schema-valid verdict gets distilled same as any other
+# `status: "ok"` completion. P5's pending gate is what catches this now:
+# scripts/review_episodic.py is where a human corrects or rejects it before
+# it can reach scripts/distill_procedural.py or (were it ever revisited)
+# any agent's prompt.
+name: stt_exclusion_notify
+steps:
+  - name: stt
+    command_type: stt.run
+    completion_type: stt.completed
+    input_schema:
+      type: object
+      required: [audio_ref]
+      properties:
+        audio_ref: {type: string, minLength: 1}
+      additionalProperties: false
+    output_schema:
+      type: object
+      required: [transcript]
+      properties:
+        transcript: {type: string}
+      additionalProperties: false
+  - name: check
+    command_type: check.run
+    completion_type: check.completed
+    input_schema:
+      type: object
+      required: [transcript]
+      properties:
+        transcript: {type: string}
+      additionalProperties: false
+    # Matches llm/exclusion_judge.py::judge_exclusion()'s return shape
+    # exactly -- should_notify/subject/body are required here (unlike
+    # stt_check_notify.yaml's optional trio), since this workflow's check
+    # agent (llm/exclusion_judge.py) always produces all six fields itself,
+    # with no shared HTTP contract to keep backward-compatible.
+    output_schema:
+      type: object
+      required: [involves_exclusion, matched_articles, reason, should_notify, subject, body]
+      properties:
+        involves_exclusion: {type: boolean}
+        matched_articles:
+          type: array
+          items: {type: string}
+        reason: {type: string}
+        should_notify: {type: boolean}
+        subject: {type: string}
+        body: {type: string}
+      additionalProperties: false
+    # Mirrors llm/exclusion_judge.py::_parse_verdict()'s raw model-output
+    # shape exactly (not should_notify/subject/body, which _build_result()
+    # derives deterministically and the model never produces itself). Never
+    # fed back into any agent's prompt (docs/knowledge-distillation-plan.md
+    # P5 removed episodic few-shot injection entirely) -- this is raw
+    # material for scripts/distill_procedural.py, gated behind
+    # scripts/review_episodic.py before it's even visible to that.
+    memory:
+      write:
+        - input_field: transcript
+          output_fields: [involves_exclusion, matched_articles, reason]
+  - name: notified
+    command_type: notified.run
+    completion_type: notified.completed
+    # Identical to stt_check_notify.yaml's notified step -- llm/notify_agent.py
+    # is scenario-agnostic (docs/exclusion-scenario-plan.md §3.5/P0), so both
+    # workflows' check steps just need to produce the same should_notify/
+    # subject/body shape for it.
+    input_schema:
+      type: object
+      required: [should_notify, subject, body]
+      properties:
+        should_notify: {type: boolean}
+        subject: {type: string}
+        body: {type: string}
+      additionalProperties: false
+    output_schema:
+      type: object
+      required: [notified_log]
+      properties:
+        notified_log:
+          type: array
+          items: {type: string}
+      additionalProperties: false

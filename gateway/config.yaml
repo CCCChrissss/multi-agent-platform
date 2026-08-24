@@ -1,0 +1,43 @@
+model_list:
+  - model_name: local-qwen
+    litellm_params:
+      model: ollama_chat/qwen2.5:3b
+      api_base: http://localhost:11434
+  - model_name: gemini-cheap
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: gemini-strong
+    litellm_params:
+      # llm/exclusion_judge.py::MODEL_NAME as of 2026-08-11 (TODO.md's
+      # exclusion-judge-model-choice) -- promoted from diagnostic-only
+      # (docs/knowledge-distillation-plan.md P2-kickoff's evals/run_eval.py
+      # --model gemini-strong comparison run) to production after
+      # gemini-cheap measured 0/5 on the drunk_driving_bike case vs this
+      # model's 15/15. `gemini-3.1-pro` (no suffix) 404s -- confirmed
+      # against the real /v1beta/models ListModels endpoint that the actual
+      # name is `gemini-3.1-pro-preview` (same 3.1 generation as
+      # gemini-cheap's flash-lite, just the pro tier); `gemini-2.5-pro` is
+      # the non-preview stable alternative if this preview tag turns out to
+      # be flaky/rate-limited/deprecated.
+      model: gemini/gemini-3.1-pro-preview
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: breeze-asr
+    litellm_params:
+      model: openai/breeze-asr
+      api_base: http://localhost:8001/v1
+      api_key: sk-local
+  - model_name: local-embed
+    litellm_params:
+      model: ollama/bge-m3
+      api_base: http://localhost:11434
+      # Ollama's embeddings endpoint rejects `encoding_format` outright (any
+      # value) -- the OpenAI SDK always sends it (defaults to "base64").
+      # drop_params silently strips params a provider doesn't support instead
+      # of erroring. Scoped to this model only -- a bad param sent to any
+      # other model should still raise, not get silently swallowed.
+      drop_params: true
+
+litellm_settings:
+  # if a call to local-qwen fails (e.g. Ollama is down), retry against gemini-cheap
+  fallbacks: [{"local-qwen": ["gemini-cheap"]}]
