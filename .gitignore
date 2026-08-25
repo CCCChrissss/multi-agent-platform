@@ -9,3 +9,9 @@ playground/
 graphify-out/
 .claude/
 保單條款.pdf
+
+# UI-built agents (demo/spec_writer.py::create_agent(), docs/ui-backend-integration-plan.md P2) --
+# generated at runtime, not hand-authored like the rest of workflows/definitions/.
+workflows/definitions/agent_*.yaml
+workflows/definitions/*.yaml.tmp
+mcp_servers/policy.yaml.tmp

@@ -102,6 +102,7 @@ async def scenario_memory_writer_gather() -> None:
         completion_type="check.completed",
         input_schema={},
         output_schema={},
+        model="local-qwen",
         memory_write=(
             MemoryWriteRule(tenant="default", input_field="transcript", output_fields=("mentions_tsmc",)),
             MemoryWriteRule(tenant="default", input_field="transcript", output_fields=("mentions_tsmc",)),

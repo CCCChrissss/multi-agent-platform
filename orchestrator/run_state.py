@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from orchestrator.workflow_def import STEPS_KEY
 from persistence.pool import get_shared_pool
 
 load_dotenv()
@@ -181,3 +182,18 @@ def merge_state(run: dict[str, Any], step_output: dict) -> dict:
     orchestrator/memory_writer.py both need this for the same `run` row on
     the same completion event."""
     return {**run["state_payload"], **step_output}
+
+
+def record_step_output(run: dict[str, Any], step_name: str, output: dict) -> dict:
+    """The full state-update dict for one step's successful ('ok') completion:
+    its own output fields (flat merge, unchanged behavior) plus this run's
+    STEPS_KEY map with `step_name`'s output attached -- the addressable
+    per-step record workflow_def.py's resolve_step_input() resolves
+    `steps.<name>.<field>` input_mapping entries against, kept separate from
+    the flat merge so two steps producing a same-named field don't clobber
+    each other under this key the way they already do (silently) in the flat
+    namespace. Callers pass the result to both run_state.advance()/
+    mark_terminal() and the checkpoint mirror, so both stay in sync."""
+    steps_map = dict(run["state_payload"].get(STEPS_KEY) or {})
+    steps_map[step_name] = output
+    return {**output, STEPS_KEY: steps_map}

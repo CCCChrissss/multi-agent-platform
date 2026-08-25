@@ -16,11 +16,12 @@ from typing import Any
 
 from gateway.client import chat_with_tools
 from harness.agent_loop import AgentLoopIncomplete, StallGuard, wrap_agent_exception
+from harness.output_capture import ToolResultCapture
 from mcp_servers.gateway import MCPGateway
+from orchestrator.workflow_def import resolve_model, resolve_prompt
 from persistence.memory_policy import MemoryPolicy
 from persistence.memory_prompt import inject_procedural
 
-MODEL_NAME = "gemini-cheap"
 # Higher than tsmc_judge.py's MAX_TURNS=4: this agent needs at least 3 turns
 # for the happy path (format check, transcribe, final reply), plus slack for
 # the model occasionally mis-naming the namespaced tool on the first attempt.
@@ -35,33 +36,43 @@ _TRANSCRIBE_TOOL_SUFFIX = "transcribe_audio"
 _MEMORY_SCOPE = ("stt_check_notify", "stt")
 _PROCEDURAL_LIMIT = 10
 
-_SYSTEM_PROMPT = (
-    "你是語音轉文字助手。可以呼叫 format__check_audio_format 檢查音檔格式，"
-    "也可以呼叫 stt__transcribe_audio 取得逐字稿。"
-    "務必使用工具清單裡列出的完整名稱（含前綴），不要省略前綴。"
-    "建議先確認格式沒問題再轉錄；如果格式不支援，就不要呼叫 stt__transcribe_audio，"
-    "直接說明原因。"
-)
-
 
 @wrap_agent_exception("stt")
 async def transcribe(
     gateway: MCPGateway,
     audio_path: str,
     *,
+    model: str | None = None,
+    system_prompt: str | None = None,
+    user_prompt: str | None = None,
     store: Any | None = None,
     memory_policy: MemoryPolicy | None = None,
     tenant: str = "default",
 ) -> str:
-    system_prompt = await inject_procedural(
-        store, memory_policy, tenant=tenant, scope=_MEMORY_SCOPE, base_prompt=_SYSTEM_PROMPT, limit=_PROCEDURAL_LIMIT
+    # system_prompt/user_prompt/model come from the caller's workflow spec
+    # (agents/runtime.py renders workflows/definitions/*.yaml's `stt` step
+    # prompt/model via orchestrator.workflow_def.render_prompt()/resolve_model()).
+    # Callers with no spec in hand (workflows/simple_pipeline.py, frozen -- see
+    # workflows/parity_check.py) fall back to _MEMORY_SCOPE's own workflow's
+    # declared prompt/model, so every path runs under the same content
+    # (docs/generic-agent-runtime-plan.md P1/P5).
+    system_prompt, user_prompt = resolve_prompt(
+        *_MEMORY_SCOPE, {"audio_ref": audio_path}, system_prompt=system_prompt, user_prompt=user_prompt
+    )
+    model = resolve_model(*_MEMORY_SCOPE, model=model)
+
+    rendered_system_prompt = await inject_procedural(
+        store, memory_policy, tenant=tenant, scope=_MEMORY_SCOPE, base_prompt=system_prompt, limit=_PROCEDURAL_LIMIT
     )
     tools = await gateway.list_openai_tools()
     messages: list[dict] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"audio_path: {audio_path}"},
+        {"role": "system", "content": rendered_system_prompt},
+        {"role": "user", "content": user_prompt},
     ]
-    transcript: str | None = None
+    # docs/generic-agent-runtime-plan.md P2's `from: tool` declaration --
+    # the transcript is whatever transcribe_audio last returned, never what
+    # the model says about it (see module docstring).
+    capture = ToolResultCapture(_TRANSCRIBE_TOOL_SUFFIX)
     # Tool calls are the only way this loop can progress -- catches the model
     # repeating the same refusal/hesitation turn after turn (even reworded
     # each time) well before MAX_TURNS is exhausted, so a genuinely long
@@ -69,14 +80,14 @@ async def transcribe(
     stall_guard = StallGuard(consecutive_limit=2)
 
     for _ in range(MAX_TURNS):
-        response = chat_with_tools(MODEL_NAME, messages, tools)
+        response = chat_with_tools(model, messages, tools)
         assistant_message = response.choices[0].message
         # we only ever register type="function" tools, so ignore any other tool-call kind
         tool_calls = [c for c in (assistant_message.tool_calls or []) if c.type == "function"]
 
         if not tool_calls:
-            if transcript is not None:
-                return transcript
+            if capture.value is not None:
+                return capture.value
             if stall_guard.observe("no_tool_call"):
                 raise AgentLoopIncomplete(
                     node="stt",
@@ -121,8 +132,7 @@ async def transcribe(
         for call in tool_calls:
             arguments = json.loads(call.function.arguments)
             result_text, is_error = await gateway.call_tool(call.function.name, arguments, call.id)
-            if call.function.name.endswith(_TRANSCRIBE_TOOL_SUFFIX) and not is_error:
-                transcript = result_text
+            capture.observe(call, arguments, result_text, is_error)
             content = f"[ERROR] {result_text}" if is_error else result_text
             messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
 

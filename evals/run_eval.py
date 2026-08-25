@@ -22,13 +22,13 @@ specific articles, depending on how it interprets "relevant".
 rule written active under a throwaway tenant, not yet implemented here --
 P3's job).
 
-`--model` overrides llm/exclusion_judge.py's MODEL_NAME for this run only
-(module-attribute patch, not a judge_exclusion() parameter -- deliberately
-not widening that function's signature for what's a diagnostic-only
-comparison, see gateway/config.yaml's gemini-strong entry). Lets this tool
+`--model` overrides judge_exclusion()'s `model` argument for this run only
+(docs/generic-agent-runtime-plan.md P5 gave that function a real `model`
+parameter -- this used to be a module-attribute patch onto
+llm/exclusion_judge.py's now-removed MODEL_NAME constant). Lets this tool
 answer "is drunk_driving_bike's 0% pass rate a model-capability ceiling, or
 something fixable in the prompt/harness" without touching the production
-MODEL_NAME.
+model declared in workflows/definitions/stt_exclusion_notify.yaml.
 
 Run with:
     uv run python -m evals.run_eval [--repeats 3] [--tenant default] [--model gemini-strong]
@@ -45,7 +45,6 @@ from pathlib import Path
 
 import yaml
 
-import llm.exclusion_judge as exclusion_judge_module
 from llm.exclusion_judge import judge_exclusion
 from mcp_servers.gateway import MCPGateway
 from mcp_servers.policy import load_policy
@@ -62,12 +61,16 @@ def _load_cases() -> list[dict]:
         return yaml.safe_load(f)
 
 
-async def _run_once(gateway: MCPGateway, store, memory_policy, tenant: str, case: dict, run_idx: int) -> dict:
+async def _run_once(
+    gateway: MCPGateway, store, memory_policy, tenant: str, case: dict, run_idx: int, model: str | None
+) -> dict:
     current_thread_id.set(f"eval-{case['id']}-{run_idx}")
     current_node_name.set("check")
     expected = case["expected"]
     try:
-        result = await judge_exclusion(gateway, case["transcript"], store=store, memory_policy=memory_policy, tenant=tenant)
+        result = await judge_exclusion(
+            gateway, case["transcript"], store=store, memory_policy=memory_policy, tenant=tenant, model=model
+        )
         return {
             "passed": result["involves_exclusion"] == expected["involves_exclusion"],
             "involves_exclusion": result["involves_exclusion"],
@@ -81,12 +84,16 @@ async def _run_once(gateway: MCPGateway, store, memory_policy, tenant: str, case
         return {"passed": False, "involves_exclusion": None, "matched_articles": None, "error": repr(exc)}
 
 
-async def _run_case(gateway: MCPGateway, store, memory_policy, tenant: str, case: dict, repeats: int) -> dict:
+async def _run_case(
+    gateway: MCPGateway, store, memory_policy, tenant: str, case: dict, repeats: int, model: str | None = None
+) -> dict:
     # Independent repeats against a store pool already sized for concurrency
     # (persistence/memory_store.py's max_size=4) -- no reason to run them
     # one at a time.
     runs = list(
-        await asyncio.gather(*(_run_once(gateway, store, memory_policy, tenant, case, i) for i in range(repeats)))
+        await asyncio.gather(
+            *(_run_once(gateway, store, memory_policy, tenant, case, i, model) for i in range(repeats))
+        )
     )
     passed = sum(r["passed"] for r in runs)
     return {
@@ -103,8 +110,7 @@ async def _run_case(gateway: MCPGateway, store, memory_policy, tenant: str, case
 
 async def main(tenant: str, repeats: int, model: str | None) -> None:
     if model:
-        print(f"[run_eval] overriding MODEL_NAME: {exclusion_judge_module.MODEL_NAME!r} -> {model!r} (this run only)")
-        exclusion_judge_module.MODEL_NAME = model
+        print(f"[run_eval] overriding model: -> {model!r} (this run only)")
     cases = _load_cases()
     policy = load_policy(str(_POLICY_PATH))
     # principal="check": judge_exclusion() reads the policy tree entirely
@@ -120,7 +126,9 @@ async def main(tenant: str, repeats: int, model: str | None) -> None:
         # Independent cases against the same pool -- see _run_case()'s
         # comment on why sequential execution here was never load-bearing.
         results = list(
-            await asyncio.gather(*(_run_case(gateway, store, memory_policy, tenant, case, repeats) for case in cases))
+            await asyncio.gather(
+                *(_run_case(gateway, store, memory_policy, tenant, case, repeats, model) for case in cases)
+            )
         )
 
     print(f"\n{'id':<24} {'split':<10} {'pass rate':<10} expected involves_exclusion={{}}")
@@ -144,6 +152,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tenant", default="default")
     parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument("--model", default=None, help="Override MODEL_NAME for this run (see gateway/config.yaml)")
+    parser.add_argument("--model", default=None, help="Override the check step's model for this run (see gateway/config.yaml)")
     args = parser.parse_args()
     asyncio.run(main(args.tenant, args.repeats, args.model))

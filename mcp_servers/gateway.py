@@ -32,9 +32,29 @@ from mcp import StdioServerParameters
 
 from mcp_servers.base_client import MCPClient
 from mcp_servers.policy import Policy, is_allowed, resolve_allowed
-from persistence.call_log import current_node_name, log_call
+from persistence.call_log import current_node_name, current_thread_id, log_call
 
 _SEPARATOR = "__"
+_MEMORY_NAMESPACE = "memory"
+# Reserved arg name MCPGateway auto-injects into every memory__* call
+# (docs/generic-agent-runtime-plan.md P7) so mcp_servers/memory/server.py's
+# call_log rows -- written from inside a stdio subprocess current_thread_id
+# can't reach on its own -- still correlate to a run. Not a real model input:
+# _strip_reserved_params() below removes it from what list_openai_tools()
+# hands the model, and this gateway overwrites whatever the model put there
+# (or left absent) unconditionally.
+_THREAD_ID_ARG = "thread_id"
+
+
+def _strip_reserved_params(tool: dict) -> dict:
+    parameters = tool["function"].get("parameters") or {}
+    properties = parameters.get("properties") or {}
+    if _THREAD_ID_ARG not in properties:
+        return tool
+    parameters = {**parameters, "properties": {k: v for k, v in properties.items() if k != _THREAD_ID_ARG}}
+    if _THREAD_ID_ARG in (parameters.get("required") or []):
+        parameters["required"] = [r for r in parameters["required"] if r != _THREAD_ID_ARG]
+    return {**tool, "function": {**tool["function"], "parameters": parameters}}
 
 
 class MCPGateway:
@@ -53,6 +73,18 @@ class MCPGateway:
         # enforce persistence/memory_policy.py's can_read()) actually reads
         # this env var -- every other server ignores it.
         self._principal = principal
+
+    def set_policy(self, policy: Policy) -> None:
+        """Swap the policy this gateway gates against, without reconnecting
+        (docs/ui-backend-integration-plan.md P1). Cheap because permissions
+        were never cached at construction: list_openai_tools()/call_tool()
+        both re-resolve per call, so the next call sees the new grants.
+
+        Does NOT spawn servers newly declared in `policy.servers` -- those are
+        launched once in connect(). Editing tool *grants* (what the UI does)
+        is covered; adding an MCP *server* still needs a process restart.
+        """
+        self._policy = policy
 
     async def connect(self) -> None:
         env = {"MCP_CALLING_PRINCIPAL": self._principal} if self._principal else None
@@ -82,6 +114,8 @@ class MCPGateway:
                 if not is_allowed(allowed, name):
                     continue
                 tool["function"]["name"] = name
+                if namespace == _MEMORY_NAMESPACE:
+                    tool = _strip_reserved_params(tool)
                 tools.append(tool)
         return tools
 
@@ -102,6 +136,14 @@ class MCPGateway:
             result_text = f"error: unknown tool namespace in '{tool_name}'"
             await log_call("tool", tool_name, arguments, result_text, True, 0, tool_call_id=tool_call_id)
             return result_text, True
+
+        if namespace == _MEMORY_NAMESPACE:
+            # Overwrite unconditionally -- current_thread_id.get() is the
+            # audit truth, not whatever the model may have put in this
+            # reserved arg (it shouldn't even see it; see
+            # _strip_reserved_params()). The only channel that survives the
+            # stdio boundary to mcp_servers/memory/server.py at all.
+            arguments = {**arguments, _THREAD_ID_ARG: current_thread_id.get()}
 
         start = time.monotonic()
         result_text, is_error = await client.call_tool(real_name, arguments)

@@ -14,27 +14,51 @@ steps:
   - name: stt
     command_type: stt.run
     completion_type: stt.completed
+    # docs/generic-agent-runtime-plan.md P5: the LiteLLM model_name
+    # (gateway/config.yaml) this step calls -- was llm/stt_agent.py's own
+    # MODEL_NAME module constant.
+    model: claude-haiku
     input_schema:
       type: object
       required: [audio_ref]
       properties:
         audio_ref: {type: string, minLength: 1}
       additionalProperties: false
+    # docs/generic-agent-runtime-plan.md P1: the system/user messages
+    # llm/stt_agent.py used to hardcode as a module constant. `user` is a
+    # Jinja2 template over this step's own input_schema fields only --
+    # load_workflow_def() validates that at load time.
+    prompt:
+      system: |-
+        你是語音轉文字助手。可以呼叫 format__check_audio_format 檢查音檔格式，也可以呼叫 stt__transcribe_audio 取得逐字稿。務必使用工具清單裡列出的完整名稱（含前綴），不要省略前綴。建議先確認格式沒問題再轉錄；如果格式不支援，就不要呼叫 stt__transcribe_audio，直接說明原因。
+      user: "audio_path: {{ input.audio_ref }}"
     output_schema:
       type: object
       required: [transcript]
       properties:
         transcript: {type: string}
       additionalProperties: false
+    # docs/generic-agent-runtime-plan.md P6: harness/generic_agent.py::run_generic_step()
+    # captures this straight off stt__transcribe_audio's tool result, never
+    # off what the model says about it (a long transcript must not be
+    # re-typed/paraphrased/truncated by the model relaying it).
+    output:
+      transcript: {from: "tool:stt__transcribe_audio"}
   - name: check
     command_type: check.run
     completion_type: check.completed
+    # was llm/tsmc_judge.py's own MODEL_NAME module constant (P5).
+    model: local-qwen
     input_schema:
       type: object
       required: [transcript]
       properties:
         transcript: {type: string}
       additionalProperties: false
+    prompt:
+      system: |-
+        你是一個文字分類助手。判斷使用者提供的文字內容是否提到台積電（包含別名，例如 TSMC、台灣積體電路製造）。直接用純文字回答，格式固定為 {"mentions_tsmc": true} 或 {"mentions_tsmc": false}，不要有其他文字。
+      user: "{{ input.transcript }}"
     output_schema:
       type: object
       required: [mentions_tsmc]
@@ -53,6 +77,13 @@ steps:
         subject: {type: string}
         body: {type: string}
       additionalProperties: false
+    # docs/generic-agent-runtime-plan.md P6: documents what llm/tsmc_judge.py
+    # already does (a `from: model` structured-output verdict) -- this step
+    # keeps its own dedicated agent (alias backstop + conflict retry, a
+    # §8-style verifier), so it's not driven by this declaration the way
+    # `stt` above is, just validated against it.
+    output:
+      mentions_tsmc: {from: model}
     # docs/long-term-memory-plan.md M3: distill each successful judgment into
     # episodic memory under (workflow_name, step_name) = (stt_check_notify,
     # check) -- the exact scope llm/tsmc_judge.py's _MEMORY_SCOPE already
@@ -65,6 +96,8 @@ steps:
   - name: notified
     command_type: notified.run
     completion_type: notified.completed
+    # was llm/notify_agent.py's own MODEL_NAME module constant (P5).
+    model: claude-haiku
     # Scenario-agnostic on purpose (docs/exclusion-scenario-plan.md §3.5/P0):
     # `notified` only knows "send or don't, with this subject/body" --
     # *whether* to notify is a scenario judgment call that belongs to
@@ -78,6 +111,13 @@ steps:
         subject: {type: string}
         body: {type: string}
       additionalProperties: false
+    # recipient_id isn't part of this step's input_schema (it comes from
+    # request context, see agents/notified/server.py) -- llm/notify_agent.py
+    # still threads it into the user message itself, outside this template.
+    prompt:
+      system: |-
+        你是通知決策助手。你會收到一個 should_notify 判斷結果、一則主旨（subject）與內容（body）——這個判斷是上游已經做完的場景決策，不是你要重新評估的東西。should_notify 為 true 時，用給定的主旨與內容發送通知，並自行決定要用哪個管道：可以先用 recall_semantic_memory 工具查這位收件人過去表達過的通知管道偏好（scope=["recipient", 收件人 id]）；查不到就照預設管道（Gmail）發，不是錯誤，不用重試。should_notify 為 false 時不用發送任何通知，這是正常情況，不是錯誤。工具執行後你會看到結果；如果失敗，可以決定要不要換個方式重試或放棄，不要重複重試同一個失敗的呼叫超過一次。
+      user: "should_notify={{ input.should_notify }}\n主旨: {{ input.subject }}\n內容: {{ input.body }}"
     output_schema:
       type: object
       required: [notified_log]
@@ -86,3 +126,9 @@ steps:
           type: array
           items: {type: string}
       additionalProperties: false
+    # docs/generic-agent-runtime-plan.md P6: documents what llm/notify_agent.py
+    # already does (accumulate a line per tool call). Keeps its own dedicated
+    # agent for the should_notify-consistency post-check, so not driven by
+    # this declaration, just validated against it.
+    output:
+      notified_log: {from: tool_log}

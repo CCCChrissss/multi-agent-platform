@@ -25,45 +25,98 @@ steps:
   - name: stt
     command_type: stt.run
     completion_type: stt.completed
+    # docs/generic-agent-runtime-plan.md P5: the LiteLLM model_name
+    # (gateway/config.yaml) this step calls -- was llm/stt_agent.py's own
+    # MODEL_NAME module constant.
+    model: gemini-cheap
     input_schema:
       type: object
       required: [audio_ref]
       properties:
         audio_ref: {type: string, minLength: 1}
       additionalProperties: false
+    prompt:
+      system: |-
+        你是語音轉文字助手。可以呼叫 format__check_audio_format 檢查音檔格式，也可以呼叫 stt__transcribe_audio 取得逐字稿。務必使用工具清單裡列出的完整名稱（含前綴），不要省略前綴。建議先確認格式沒問題再轉錄；如果格式不支援，就不要呼叫 stt__transcribe_audio，直接說明原因。
+      user: "audio_path: {{ input.audio_ref }}"
     output_schema:
       type: object
       required: [transcript]
       properties:
         transcript: {type: string}
       additionalProperties: false
+    # docs/generic-agent-runtime-plan.md P6: harness/generic_agent.py::run_generic_step()
+    # captures this straight off stt__transcribe_audio's tool result, never
+    # off what the model says about it.
+    output:
+      transcript: {from: "tool:stt__transcribe_audio"}
   - name: check
     command_type: check.run
     completion_type: check.completed
+    # was llm/exclusion_judge.py's own MODEL_NAME module constant (P5).
+    model: claude-haiku
     input_schema:
       type: object
       required: [transcript]
       properties:
         transcript: {type: string}
       additionalProperties: false
+    # scope=["insurance_product", "kgi_ltc"] below is hardcoded to this one
+    # seeded product (data/insurance_product/kgi_ltc.yaml,
+    # docs/exclusion-scenario-plan.md P3) rather than a browsable "which
+    # product" step -- routing across multiple products is a real future
+    # need but not this scenario's, so it's not built ahead of a second
+    # product actually existing.
+    prompt:
+      system: |-
+        你是保單除外責任判斷助手。你會收到一段客戶與業務討論保險權利的逐字稿，判斷客戶描述的情況是否涉及本保單的「除外責任」（保險公司依條款不負給付責任、或暫停豁免保險費的情況）。
+
+        你不知道這份保單條款實際寫什麼，也不可以用你自己對保險的一般常識回答——你必須透過 browse_semantic_memory 這個工具實際查閱條款內容，再根據查到的條文做判斷。
+
+        用法：
+        - 從 scope=["insurance_product", "kgi_ltc"] 開始查（這是本次要判斷的保單）。
+        - 每次呼叫會回傳這一層底下有哪些分支（children，各附一句話說明）跟這一層本身的條文內容（items，如果這層是葉節點的話）。
+        - 看到想深入的分支，把它的 segment 名字加進 scope 陣列裡再呼叫一次，往下鑽。
+        - 如果鑽進去的分支沒有你要的答案，不要用猜的——用回傳值裡的 parent 退回上一層，看 siblings 裡還有哪些分支沒探索過，換一個方向繼續找。
+
+        下結論前，以下兩件事都要查證過，不能只查其中一項就下結論：
+        1. 有沒有除外條款的原因跟客戶描述的情況對得上？
+        2. 那條除外條款排除的是哪一項保險金給付？那項給付本身的門檻（例如失能要達到第幾級、是不是符合長期照顧狀態的定義），客戶描述的情況實際上有沒有達到？如果連給付本身的門檻都沒達到，這項給付本來就不會理賠，跟除外條款無關——這種情況不算「涉及除外責任」，是給付條件本身沒成立。要查清楚失能等級，通常要另外去查失能程度表（附表），不會只看除外責任那個分支就有答案。
+        第 1、2 點通常記在不同分支底下，只查完第 1 點就下結論是不夠的。
+        如果你查到了具體的失能等級（例如「第六級」），reason 裡要直接寫出那個等級，並明確跟除外條款排除的門檻（例如「第二至三級」）做比較、講出結論——不要說「建議客戶再確認」或「若符合…則…」這種保留字句，你已經查到的資料就是答案，不需要保留、不需要交給客戶或專科醫師再確認。
+
+        - 只有你透過這個工具實際讀到全文的條文，才可以在最終答案裡引用；沒讀過的條文，即使你覺得應該相關，也不可以引用。
+
+        查完之後，直接用純文字回答，格式固定為：
+        {"involves_exclusion": true 或 false, "matched_articles": ["第XX條", ...], "reason": "..."}
+        - matched_articles 只能放你已經透過工具讀到全文的條號/附表名稱（跟工具回傳的 "article" 欄位完全一致的字串），沒有相關條文就給空陣列。
+        - reason 用一兩句話說明判斷依據，特別是如果查到的除外條款跟客戶的失能情況不完全對應（例如除外條款只適用某幾種給付，不是全部給付），要在 reason 裡講清楚。
+        - 不要有格式以外的文字。
+      user: "{{ input.transcript }}"
     # Matches llm/exclusion_judge.py::judge_exclusion()'s return shape
-    # exactly -- should_notify/subject/body are required here (unlike
-    # stt_check_notify.yaml's optional trio), since this workflow's check
-    # agent (llm/exclusion_judge.py) always produces all six fields itself,
-    # with no shared HTTP contract to keep backward-compatible.
+    # exactly -- should_notify/subject/body are no longer part of it
+    # (docs/generic-agent-runtime-plan.md P0): they were derived
+    # deterministically by the now-deleted _build_result(), not judged by
+    # the model, so they've moved to `notified`'s input_mapping below
+    # instead of being forwarded through check's own output.
     output_schema:
       type: object
-      required: [involves_exclusion, matched_articles, reason, should_notify, subject, body]
+      required: [involves_exclusion, matched_articles, reason]
       properties:
         involves_exclusion: {type: boolean}
         matched_articles:
           type: array
           items: {type: string}
         reason: {type: string}
-        should_notify: {type: boolean}
-        subject: {type: string}
-        body: {type: string}
       additionalProperties: false
+    # docs/generic-agent-runtime-plan.md P6: documents what llm/exclusion_judge.py
+    # already does (a `from: model` structured-output verdict). Keeps its
+    # own dedicated agent (citation-check + conflict retry, a §8-style
+    # verifier), so not driven by this declaration, just validated against it.
+    output:
+      involves_exclusion: {from: model}
+      matched_articles: {from: model}
+      reason: {from: model}
     # Mirrors llm/exclusion_judge.py::_parse_verdict()'s raw model-output
     # shape exactly (not should_notify/subject/body, which _build_result()
     # derives deterministically and the model never produces itself). Never
@@ -78,10 +131,19 @@ steps:
   - name: notified
     command_type: notified.run
     completion_type: notified.completed
-    # Identical to stt_check_notify.yaml's notified step -- llm/notify_agent.py
-    # is scenario-agnostic (docs/exclusion-scenario-plan.md §3.5/P0), so both
-    # workflows' check steps just need to produce the same should_notify/
-    # subject/body shape for it.
+    # was llm/notify_agent.py's own MODEL_NAME module constant (P5).
+    model: claude-haiku
+    # llm/notify_agent.py is scenario-agnostic (docs/exclusion-scenario-plan.md
+    # §3.5/P0), so should_notify/subject/body are derived here via
+    # input_mapping instead of being part of check's judgment output
+    # (docs/generic-agent-runtime-plan.md P0). No conditional: `subject`/
+    # `body` are always filled in the same shape regardless of
+    # involves_exclusion -- llm/notify_agent.py already skips sending when
+    # should_notify is false, so their content is irrelevant in that case.
+    input_mapping:
+      should_notify: {from: "steps.check.involves_exclusion"}
+      subject: {const: "客戶對話涉及保單除外責任，需要人工覆核"}
+      body: {expr: "逐字稿：{{ steps.stt.transcript }}\n引用條文：{{ (steps.check.matched_articles | join('、')) or '無' }}\n理由：{{ steps.check.reason }}"}
     input_schema:
       type: object
       required: [should_notify, subject, body]
@@ -90,6 +152,13 @@ steps:
         subject: {type: string}
         body: {type: string}
       additionalProperties: false
+    # Same prompt as stt_check_notify.yaml's notified step -- llm/notify_agent.py
+    # is genuinely scenario-agnostic, so this is the same declaration
+    # repeated per workflow, not two different agents.
+    prompt:
+      system: |-
+        你是通知決策助手。你會收到一個 should_notify 判斷結果、一則主旨（subject）與內容（body）——這個判斷是上游已經做完的場景決策，不是你要重新評估的東西。should_notify 為 true 時，用給定的主旨與內容發送通知，並自行決定要用哪個管道：可以先用 recall_semantic_memory 工具查這位收件人過去表達過的通知管道偏好（scope=["recipient", 收件人 id]）；查不到就照預設管道（Gmail）發，不是錯誤，不用重試。should_notify 為 false 時不用發送任何通知，這是正常情況，不是錯誤。工具執行後你會看到結果；如果失敗，可以決定要不要換個方式重試或放棄，不要重複重試同一個失敗的呼叫超過一次。
+      user: "should_notify={{ input.should_notify }}\n主旨: {{ input.subject }}\n內容: {{ input.body }}"
     output_schema:
       type: object
       required: [notified_log]
@@ -98,3 +167,9 @@ steps:
           type: array
           items: {type: string}
       additionalProperties: false
+    # docs/generic-agent-runtime-plan.md P6: documents what llm/notify_agent.py
+    # already does. Keeps its own dedicated agent for the
+    # should_notify-consistency post-check, so not driven by this
+    # declaration, just validated against it.
+    output:
+      notified_log: {from: tool_log}

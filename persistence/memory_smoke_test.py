@@ -67,6 +67,16 @@ Scenarios:
     §3.4/P2) lands its keys in `value` alongside the fixed audit fields
     without clobbering `status`/`content`/etc, even though `extra` is
     applied first in the merge.
+  - thread_id_crosses_mcp_boundary: docs/generic-agent-runtime-plan.md P7 --
+    unlike every scenario above (which calls recall()/browse() directly
+    in-process), this one routes through the real MCPGateway.call_tool()
+    path every agent actually uses, so the memory tool executes inside
+    mcp_servers/memory/server.py's stdio subprocess. Before P7 the resulting
+    call_log row's thread_id was always NULL there (current_thread_id can't
+    cross a stdio boundary on its own); this asserts the row is now
+    findable by thread_id like any other. Needs the memory MCP subprocess to
+    actually spawn (`uv run python -m mcp_servers.memory.server`) -- no
+    Ollama/LiteLLM needed, the memory tools never call an LLM.
 """
 
 from __future__ import annotations
@@ -74,6 +84,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from mcp_servers.gateway import MCPGateway
+from mcp_servers.policy import load_policy
 from persistence.call_log import current_node_name, current_thread_id, ensure_schema as ensure_call_log_schema, fetch_calls
 from persistence.memory import GLOBAL_TENANT, INDEX_KEY, MemoryKind, browse, build_namespace, edit, forget, recall, remember
 from persistence.memory_policy import MemoryGrant, MemoryPolicy, load_memory_policy
@@ -478,6 +490,34 @@ async def scenario_status_gate(store, policy) -> None:
     print("[status_gate_browse_index] OK -- pending _index summary hidden; segment-name gap is the documented one")
 
 
+async def scenario_thread_id_crosses_mcp_boundary() -> None:
+    """P7: `notified` is granted `memory__recall_semantic_memory` at the tool
+    level (mcp_servers/policy.yaml) and `default/semantic/recipient/*` at the
+    namespace level -- an empty result (no data written for this scope) is
+    fine, denied=False and a logged call_log row are what this scenario
+    checks, not the recall content itself."""
+    thread_id = "smoke-thread-mcp-boundary"
+    current_thread_id.set(thread_id)
+    current_node_name.set("notified")
+
+    gateway_policy = load_policy(str(_POLICY_PATH))
+    async with MCPGateway(gateway_policy, principal="notified") as gateway:
+        tools = await gateway.list_openai_tools()
+        recall_tool = next(t for t in tools if t["function"]["name"] == "memory__recall_semantic_memory")
+        assert "thread_id" not in recall_tool["function"]["parameters"]["properties"], recall_tool
+        print("[thread_id_crosses_mcp_boundary] OK -- list_openai_tools() hides thread_id from the model")
+
+        result_text, is_error = await gateway.call_tool(
+            "memory__recall_semantic_memory", {"scope": ["recipient", "smoke-test-recipient"]}
+        )
+    assert not is_error, result_text
+
+    rows = [r for r in await fetch_calls(thread_id) if r["kind"] == "memory" and r["name"] == "recall"]
+    assert rows, "expected a kind='memory' call_log row for this thread_id -- it must have crossed the MCP stdio boundary"
+    assert rows[0]["denied"] is False, rows[0]
+    print(f"[thread_id_crosses_mcp_boundary] OK -- MCP-originated memory call_log row correlates to thread_id={thread_id!r}")
+
+
 async def _cleanup(store) -> None:
     """Unlike orchestrator/smoke_test.py (which sidesteps collisions with a
     fresh uuid thread_id per run), these scenarios write fixed keys under
@@ -530,6 +570,7 @@ async def main() -> None:
             await scenario_audit_log(store, policy)
             await scenario_status_gate(store, policy)
             await scenario_remember_extra_fields(store, policy)
+            await scenario_thread_id_crosses_mcp_boundary()
         finally:
             await _cleanup(store)
     print("\nAll memory smoke tests passed.")

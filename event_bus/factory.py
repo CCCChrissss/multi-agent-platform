@@ -21,10 +21,11 @@ if TYPE_CHECKING:
 load_dotenv()
 
 
-def get_event_bus(*, pool: AsyncConnectionPool | None = None) -> EventBus:
+def get_event_bus(*, pool: AsyncConnectionPool | None = None, poll_interval: float | None = None) -> EventBus:
     backend = os.environ.get("EVENT_BUS_BACKEND", "postgres")
     if backend == "postgres":
         from event_bus.postgres import PostgresEventBus
 
-        return PostgresEventBus(os.environ["PERSISTENCE_DATABASE_URL"], pool=pool)
+        kwargs = {} if poll_interval is None else {"poll_interval": poll_interval}
+        return PostgresEventBus(os.environ["PERSISTENCE_DATABASE_URL"], pool=pool, **kwargs)
     raise ValueError(f"unknown EVENT_BUS_BACKEND: {backend!r}")

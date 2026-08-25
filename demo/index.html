@@ -1,0 +1,2457 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>Agent 平台 Demo（本機）</title>
+<style>
+  :root {
+    color-scheme: light;
+
+    --ground: #EDECEF;
+    --surface: #FFFFFF;
+    --surface-2: #F4F3F8;
+    --line: #D6D4E0;
+    --line-soft: #E5E3EC;
+    --ink: #16151E;
+    --ink-2: #2F2D3B;
+    --ink-3: #4A4757;
+    --muted: #8F8BA0;
+    --accent: #3F43A0;
+    --accent-ink: #FFFFFF;
+    --accent-soft: rgba(63, 67, 160, 0.10);
+    --run: #8F5E12;
+    --run-soft: rgba(143, 94, 18, 0.13);
+    --ok: #24684A;
+    --ok-soft: rgba(36, 104, 74, 0.13);
+    --bad: #9C3728;
+    --bad-soft: rgba(156, 55, 40, 0.13);
+    --canvas: #E9E8EE;
+    --canvas-dot: #C7C5D4;
+    --shadow: 0 1px 2px rgba(25, 24, 35, 0.06), 0 8px 24px rgba(25, 24, 35, 0.07);
+
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+
+    --console-h: 240px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  ::placeholder { color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+  .mono { font-family: var(--mono); }
+
+  .app { height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+
+  .topbar {
+    display: flex; align-items: center; gap: 18px; padding: 10px 16px;
+    background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand b { font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; }
+  .tag {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 2px 6px; border: 1px dashed var(--line); border-radius: 3px; color: var(--ink-3); white-space: nowrap;
+  }
+  .field { display: flex; align-items: center; gap: 7px; }
+  .field > label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); }
+  select {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 5px;
+    padding: 5px 8px; font-family: var(--mono); font-size: 12px; color: var(--ink); max-width: 280px;
+  }
+  .spacer { flex: 1 1 auto; }
+  .run-btn {
+    display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: var(--accent-ink);
+    border: none; border-radius: 5px; padding: 7px 16px; font-family: var(--mono);
+    font-size: 12px; font-weight: 600; letter-spacing: 0.05em; cursor: pointer;
+  }
+  .run-btn:hover { filter: brightness(1.1); }
+  .run-btn[disabled] { opacity: 0.45; cursor: default; filter: none; }
+  .ghost-btn {
+    background: transparent; border: 1px solid var(--line); border-radius: 5px;
+    padding: 6px 12px; font-family: var(--mono); font-size: 12px; color: var(--ink-2); cursor: pointer;
+  }
+  .ghost-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .ghost-btn[disabled] { opacity: 0.45; cursor: default; }
+  .ghost-btn[disabled]:hover { border-color: var(--line); color: var(--ink-2); }
+  .runmeta { font-family: var(--mono); font-size: 11px; color: var(--ink-2); display: flex; gap: 14px; align-items: center; }
+  .runmeta b { color: var(--ink); font-weight: 600; }
+
+  .body { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .left { display: grid; grid-template-rows: minmax(0, 1fr) 7px var(--console-h); min-width: 0; }
+
+  .split { position: relative; background: transparent; }
+  .split::after { content: ""; position: absolute; background: var(--line); transition: background 0.12s; }
+  .split-h { cursor: row-resize; }
+  .split-h::after { left: 0; right: 0; top: 3px; height: 1px; }
+  .split:hover::after, .split.dragging::after { background: var(--accent); }
+
+  /* ---------- 畫布 ---------- */
+  .canvas {
+    position: relative; overflow: hidden; background-color: var(--canvas);
+    background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px);
+    background-size: 22px 22px; touch-action: none; cursor: grab;
+  }
+  .canvas.panning { cursor: grabbing; }
+  #viewport { position: absolute; top: 0; left: 0; width: 0; height: 0; transform-origin: 0 0; }
+  .wires { position: absolute; top: 0; left: 0; width: 2600px; height: 1600px; pointer-events: none; overflow: visible; }
+  .wire { fill: none; stroke: var(--line); stroke-width: 1.75; }
+  .wire.hot { stroke: var(--run); stroke-dasharray: 5 4; animation: flow 0.7s linear infinite; }
+  .wire.done { stroke: var(--ok); }
+  @keyframes flow { to { stroke-dashoffset: -18px; } }
+
+  .edge-label {
+    position: absolute; transform-origin: 0 0; cursor: pointer; white-space: nowrap;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+    padding: 2px 9px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+    box-shadow: var(--shadow);
+  }
+  .edge-label:hover { border-color: var(--accent); color: var(--accent); }
+  .edge-label.none { border-style: dashed; color: var(--bad); }
+
+  .zoombar {
+    position: absolute; right: 12px; bottom: 12px; display: flex; gap: 4px; align-items: center;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px; box-shadow: var(--shadow);
+  }
+  .zoombar button {
+    background: none; border: none; cursor: pointer; font-family: var(--mono);
+    font-size: 12px; color: var(--ink-2); padding: 3px 8px; border-radius: 4px; line-height: 1.4;
+  }
+  .zoombar button:hover { background: var(--surface-2); color: var(--ink); }
+  .zoombar .lvl { font-family: var(--mono); font-size: 11px; color: var(--ink-2); min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
+  .canvas-hint { position: absolute; left: 14px; bottom: 14px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+  .canvas-empty {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center;
+    color: var(--ink-3); font-family: var(--mono); font-size: 12.5px; line-height: 1.8; pointer-events: none; max-width: 380px;
+  }
+
+  .node {
+    position: absolute; width: 188px; background: var(--surface);
+    border: 1px solid var(--line); border-left: 3px solid var(--ink-3);
+    border-radius: 7px; box-shadow: var(--shadow); cursor: grab; user-select: none; padding: 10px 12px 11px;
+  }
+  .node:active { cursor: grabbing; }
+  .node.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }
+  .node.running { border-left-color: var(--run); }
+  .node.done { border-left-color: var(--ok); }
+  .node.bad { border-left-color: var(--bad); }
+  .node-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .node-name { font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+  .node-desc { font-size: 12px; color: var(--ink-2); margin-top: 3px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; }
+  .node.running .dot { background: var(--run); animation: pulse 1s ease-in-out infinite; }
+  .node.done .dot { background: var(--ok); }
+  .node.bad .dot { background: var(--bad); }
+  @keyframes pulse { 50% { opacity: 0.25; } }
+
+  .chip {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.02em; padding: 2px 6px;
+    border-radius: 3px; background: var(--surface-2); color: var(--ink-2);
+    border: 1px solid var(--line-soft); white-space: nowrap;
+  }
+  .chip.edited { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+
+  /* ---------- Agent 設定：置中彈窗 ---------- */
+  .inspector { display: none; }
+  .inspector.open {
+    display: flex; align-items: center; justify-content: center;
+    position: fixed; inset: 0; z-index: 50; padding: 24px;
+  }
+  .insp-backdrop { position: absolute; inset: 0; background: rgba(22, 21, 30, 0.45); }
+  .insp-modal {
+    position: relative; background: var(--surface); border-radius: 10px; box-shadow: var(--shadow);
+    width: min(1440px, 96vw); height: min(900px, 92vh); display: flex; flex-direction: column; overflow: hidden;
+  }
+  .insp-modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); flex: none; }
+  .insp-modal-head h2 { margin: 0; font-family: var(--mono); font-size: 16px; letter-spacing: 0.02em; }
+  .insp-close {
+    background: none; border: none; cursor: pointer; font-size: 20px; line-height: 1; color: var(--ink-3);
+    padding: 4px 8px; border-radius: 4px; flex: none;
+  }
+  .insp-close:hover { background: var(--surface-2); color: var(--ink); }
+  .insp-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1.2fr 1fr; }
+  .insp-col { overflow-y: auto; padding: 14px 16px 24px; min-width: 0; }
+  .insp-col + .insp-col { border-left: 1px solid var(--line); }
+  .insp-col-title {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.13em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 12px;
+  }
+
+  /* 中間欄：Agent 零件改成分頁——蓋掉 .tabs 原本給主控台用的 padding/底線 */
+  .tabs.mid-tabs { padding: 0 0 10px; border-bottom: none; }
+  .mid-body { margin-top: 4px; }
+  .desc-edit {
+    flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--line-soft);
+    border-radius: 5px; padding: 6px 9px; font-size: 12.5px; color: var(--ink);
+  }
+  .desc-edit:hover { border-color: var(--line); }
+
+  .sect-title {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.11em; text-transform: uppercase;
+    color: var(--ink-3); margin: 16px 0 8px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  }
+  .sect-title:first-child { margin-top: 0; }
+  .hint { font-size: 11.5px; color: var(--ink-3); margin: 7px 0 0; }
+
+  /* 來源對應（唯讀） */
+  .maprow { background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 6px; padding: 8px 9px; margin-bottom: 7px; }
+  .srow-top { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+  .sname { font-family: var(--mono); font-size: 11.5px; color: var(--ink); font-weight: 600; }
+  .stype { font-family: var(--mono); font-size: 9.5px; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line-soft); border-radius: 3px; padding: 1px 5px; }
+  .sreq { font-family: var(--mono); font-size: 9.5px; color: var(--bad); }
+  .slabel { margin-left: auto; font-size: 11px; color: var(--ink-3); }
+
+  .mapline { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
+  .mapline > .lbl { font-size: 10.5px; color: var(--ink-3); font-family: var(--mono); flex: none; }
+  .resolved {
+    margin-top: 6px; padding: 5px 8px; background: var(--surface); border: 1px solid var(--line-soft);
+    border-radius: 5px; font-size: 12px; color: var(--ink); display: flex; gap: 7px; align-items: baseline;
+  }
+  .resolved .ar { color: var(--ok); font-family: var(--mono); flex: none; }
+  .resolved.sample-only { color: var(--muted); }
+  .resolved .val { min-width: 0; word-break: break-word; }
+
+  /* prompt 模板 */
+  .prompt-box {
+    width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 6px 6px 0 0;
+    padding: 8px 10px; font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
+    color: var(--ink); resize: vertical; min-height: 72px; display: block;
+  }
+  .prompt-preview {
+    background: var(--surface-2); border: 1px solid var(--line); border-top: none; border-radius: 0 0 6px 6px;
+    padding: 8px 10px; font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
+    color: var(--muted); white-space: pre-wrap; word-break: break-word;
+  }
+  .prompt-preview b { color: var(--ink); font-weight: 600; }
+
+  .io-block { background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 6px; padding: 9px 10px; }
+  .io-block > .k {
+    display: flex; justify-content: space-between; align-items: baseline; font-family: var(--mono);
+    font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ok); margin-bottom: 8px; font-weight: 600;
+  }
+  .io-block.bad > .k { color: var(--bad); }
+  .schema { display: grid; gap: 5px; }
+  .srow { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 5px; padding: 6px 8px; }
+  .sample {
+    display: block; margin-top: 4px; padding: 4px 7px; background: var(--surface-2); border-radius: 4px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: pre-wrap; word-break: break-word;
+  }
+  .sval { margin-top: 5px; }
+
+  .fields { display: grid; gap: 7px; }
+  .frow { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+  .frow > .fk { font-size: 11.5px; color: var(--ink-3); }
+  .frow > .fv { font-size: 12.5px; color: var(--ink); min-width: 0; word-break: break-word; }
+  .frow > .fv .mono { font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+  .pill { display: inline-block; font-family: var(--mono); font-size: 10.5px; padding: 1px 7px; border-radius: 3px; letter-spacing: 0.03em; }
+  .pill.yes { background: var(--bad-soft); color: var(--bad); }
+  .pill.no { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line-soft); }
+  .tagchip {
+    display: inline-block; font-family: var(--mono); font-size: 10.5px; background: var(--accent-soft);
+    color: var(--accent); border-radius: 3px; padding: 1px 7px; margin: 0 4px 4px 0;
+  }
+  .longtext { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 5px; padding: 7px 9px; font-size: 12.5px; line-height: 1.65; color: var(--ink); }
+
+  .origin { font-family: var(--mono); font-size: 9.5px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+  .origin.tool { background: var(--ok-soft); color: var(--ok); }
+
+  /* 單點測試 */
+  .test { border: 1px solid var(--line-soft); border-radius: 7px; padding: 11px; background: var(--surface-2); }
+  .test label.tl { display: block; font-family: var(--mono); font-size: 11px; color: var(--ink-2); margin: 9px 0 4px; }
+  .test label.tl:first-of-type { margin-top: 0; }
+  .test textarea, .test select, .test input[type="text"] {
+    width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 5px;
+    padding: 6px 8px; font-family: var(--mono); font-size: 11.5px; color: var(--ink);
+    resize: vertical; min-height: 34px; max-width: none;
+  }
+  .test .boolrow { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11.5px; }
+  .test .boolrow input { accent-color: var(--accent); }
+  .test-actions { display: flex; align-items: center; gap: 10px; margin-top: 11px; }
+  .test-out { margin-top: 11px; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 6px; padding: 9px 10px; }
+  .test-out .th { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); margin-bottom: 8px; }
+  .test-log table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 10.5px; }
+  .test-log td { padding: 4px 6px; border-bottom: 1px solid var(--line-soft); color: var(--ink); vertical-align: top; }
+
+  /* 新增 Agent 表單：欄位一列 */
+  .field-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .field-row input[type="text"] { width: auto; flex: 1 1 auto; }
+  .field-row select { width: auto; flex: 0 0 116px; }
+  .field-row .check { flex: 0 0 auto; padding: 0; }
+  .field-row .fr-remove { flex: 0 0 auto; padding: 4px 9px; }
+
+  /* 錯誤 banner——取代 alert()，理由見上面 window.addEventListener("error", ...) 的註解 */
+  .err-banner {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 999;
+    max-width: 640px; width: calc(100% - 28px); background: var(--bad-soft); border: 1px solid var(--bad);
+    border-radius: 7px; padding: 10px 12px; box-shadow: var(--shadow);
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .err-banner pre { margin: 0; flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 11.5px; color: var(--bad); }
+  .err-banner button { background: none; border: none; color: var(--bad); cursor: pointer; font-size: 15px; line-height: 1; flex: none; padding: 0; }
+  .test-log tr:last-child td { border-bottom: none; }
+
+  /* 零件 */
+  .slot {
+    background: var(--surface-2); border: 1px solid var(--line-soft); border-left: 3px solid var(--line);
+    border-radius: 6px; padding: 10px 11px 11px; margin-bottom: 9px;
+  }
+  .slot:last-child { margin-bottom: 0; }
+  .slot.changed { border-left-color: var(--accent); }
+  .slot-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 9px; }
+  .slot-name { font-size: 12.5px; font-weight: 600; }
+  .slot-role { font-size: 11.5px; color: var(--ink-3); }
+  .slot-flag {
+    margin-left: auto; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em;
+    color: var(--accent); background: var(--accent-soft); border-radius: 3px; padding: 1px 5px;
+  }
+  .slot select { width: 100%; max-width: none; }
+
+  .switch {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px;
+    background: var(--surface); border: 1px solid var(--line-soft); border-radius: 5px; cursor: pointer;
+  }
+  .switch span { font-size: 12.5px; }
+  .toggle { width: 34px; height: 19px; border-radius: 10px; background: var(--ink-3); position: relative; flex: none; transition: background 0.15s; }
+  .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: var(--surface); transition: transform 0.15s; }
+  .switch.on .toggle { background: var(--accent); }
+  .switch.on .toggle::after { transform: translateX(15px); }
+
+  .srv { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 5px; margin-bottom: 7px; overflow: hidden; }
+  .srv:last-child { margin-bottom: 0; }
+  .srv-head { display: flex; align-items: center; gap: 8px; padding: 7px 9px; cursor: pointer; border-bottom: 1px solid var(--line-soft); }
+  .srv-head input { accent-color: var(--accent); margin: 0; }
+  .srv-name { font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
+  .srv-count { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--ink-2); }
+  .srv-tools { padding: 3px 9px 6px 27px; }
+  .check { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; font-family: var(--mono); font-size: 11px; }
+  .check input { accent-color: var(--accent); }
+  /* 長期記憶瀏覽 */
+  .subtabs { display: flex; gap: 6px; margin: 10px 0 4px; }
+  .subtab {
+    background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 999px;
+    padding: 3px 11px; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+  }
+  .subtab.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+  .mem { margin-top: 4px; }
+  .mem-here {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--surface-2);
+    border: 1px solid var(--line-soft); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px;
+  }
+  .mem-here .lbl { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); }
+  .mem-here .path { font-family: var(--mono); font-size: 11.5px; word-break: break-all; }
+  .mem-here .up {
+    margin-left: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+    padding: 2px 9px; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+  }
+  .mem-here .up:hover { border-color: var(--accent); color: var(--accent); }
+  .mem-group { margin-bottom: 12px; }
+  .mem-group > h4 {
+    margin: 0 0 6px; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--ink-3); display: flex; align-items: center; gap: 8px;
+  }
+  .mem-group > h4::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+  .children { border-left: 2px solid var(--accent-soft); padding-left: 9px; display: grid; gap: 5px; }
+  .child {
+    display: flex; align-items: baseline; gap: 9px; cursor: pointer; background: var(--surface);
+    border: 1px solid var(--line-soft); border-radius: 6px; padding: 7px 9px;
+  }
+  .child:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .child .arrow { color: var(--accent); font-family: var(--mono); }
+  .child .seg { font-family: var(--mono); font-size: 11.5px; font-weight: 600; }
+  .child .sum { font-size: 11px; color: var(--ink-3); }
+  .siblings { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sib {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer; background: transparent;
+    border: 1px dashed var(--line); border-radius: 999px; padding: 3px 11px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+  }
+  .sib:hover { border-style: solid; border-color: var(--accent); color: var(--accent); }
+  .items { display: grid; gap: 6px; }
+  .mem-item { padding: 8px 9px; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 6px; }
+  .mem-item .k { color: var(--ink-2); font-family: var(--mono); font-size: 10px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .mem-item .v { font-size: 12px; margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
+  .mem-item .v.sub { color: var(--ink-3); font-size: 11px; }
+  .status-chip { font-family: var(--mono); font-size: 9.5px; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.05em; }
+  .status-chip.active { background: var(--ok-soft); color: var(--ok); }
+  .status-chip.pending { background: var(--run-soft); color: var(--run); }
+
+  /* 記憶蒸餾審核台（docs/distill-ui-plan.md） */
+  .review-entry { display: grid; gap: 10px; padding: 14px; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 8px; }
+  .review-entry-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; color: var(--ink-2); }
+  .review-entry-row b { font-family: var(--mono); font-size: 15px; color: var(--ink); }
+  .review-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 18px 18px; }
+  .review-cols { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 16px; margin-top: 12px; align-items: start; }
+  .review-left { display: flex; flex-direction: column; gap: 10px; }
+  .cand-list { display: grid; gap: 6px; }
+  .cand-row { padding: 8px 9px; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 6px; cursor: pointer; font-size: 12px; line-height: 1.4; }
+  .cand-row:hover { border-color: var(--accent); }
+  .cand-row.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .dot.pulse { background: var(--run); animation: pulse 1s ease-in-out infinite; display: inline-block; margin-left: 6px; vertical-align: middle; }
+  .evi-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
+  .warn-chip { font-size: 11.5px; color: var(--bad); background: var(--bad-soft); border-radius: 5px; padding: 6px 9px; margin-top: 8px; }
+  .case-tooltip {
+    display: none; position: fixed; z-index: 1000; max-width: 320px; background: var(--ink); color: var(--surface);
+    border-radius: 6px; padding: 8px 10px; font-size: 11.5px; line-height: 1.5; box-shadow: var(--shadow); pointer-events: none;
+  }
+  .case-tooltip .v { margin-top: 4px; word-break: break-word; }
+  .case-tooltip .v:first-child { margin-top: 0; }
+  .case-tooltip .sub { color: var(--muted); }
+  td[data-hover-case], .evi-chips .chip { cursor: help; }
+
+  /* ---------- 主控台 ---------- */
+  .console { background: var(--surface); display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+  .tabs { display: flex; align-items: center; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .tab {
+    background: none; border: none; padding: 9px 13px; font-family: var(--mono); font-size: 11.5px;
+    letter-spacing: 0.04em; color: var(--ink-3); cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .tab.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab .count { color: var(--ink-2); }
+  .console-body { overflow: auto; }
+  .pane { display: none; }
+  .pane.on { display: block; }
+
+  .viewing-bar {
+    display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--accent-soft);
+    font-family: var(--mono); font-size: 11px; color: var(--accent); position: sticky; top: 0; z-index: 2;
+  }
+  .viewing-bar button { margin-left: auto; background: none; border: 1px solid currentColor; border-radius: 4px; color: inherit; font: inherit; padding: 1px 8px; cursor: pointer; }
+
+  table.log { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11.5px; }
+  table.log th {
+    text-align: left; font-weight: 600; font-size: 10px; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--ink-2); padding: 7px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface);
+  }
+  table.log td { padding: 6px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; color: var(--ink); }
+  table.log tr.row { cursor: pointer; }
+  table.log tr.row:hover td { background: var(--surface-2); }
+  table.log tr.row.sel td { background: var(--accent-soft); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .kind {
+    display: inline-block; min-width: 52px; text-align: center; padding: 1px 5px; border-radius: 3px;
+    font-size: 10px; letter-spacing: 0.05em; background: var(--surface-2); border: 1px solid var(--line-soft); color: var(--ink-2);
+  }
+  .kind.llm { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+  .kind.memory { color: var(--ok); border-color: var(--ok-soft); background: var(--ok-soft); }
+  .flag { color: var(--bad); font-size: 10px; letter-spacing: 0.05em; }
+  .st-pill { font-family: var(--mono); font-size: 10px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+  .st-pill.completed { background: var(--ok-soft); color: var(--ok); }
+  .st-pill.needs_review { background: var(--bad-soft); color: var(--bad); }
+  .st-pill.failed { background: var(--bad-soft); color: var(--bad); }
+  .st-pill.running { background: var(--run-soft); color: var(--run); }
+  .detail td { background: var(--surface-2); }
+  .detail pre { margin: 0; padding: 8px 0 4px; font-family: var(--mono); font-size: 11px; line-height: 1.6; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+  .detail details + details { margin-top: 4px; }
+  .detail summary { cursor: pointer; font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); padding: 2px 0; }
+  .empty { padding: 30px 16px; text-align: center; color: var(--ink-3); font-size: 12.5px; }
+
+  .rlist { padding: 6px 0 14px; }
+  .rrow {
+    display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--line-soft);
+    cursor: pointer; font-family: var(--mono); font-size: 11.5px;
+  }
+  .rrow:hover { background: var(--surface-2); }
+  .rrow .caret { color: var(--ink-2); width: 10px; }
+  .rrow .when { color: var(--ink-2); }
+  .rrow.sel { background: var(--accent-soft); }
+  .rdetail { padding: 12px 14px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line-soft); display: grid; gap: 10px; }
+  .rcard { border: 1px solid var(--line-soft); border-radius: 7px; overflow: hidden; background: var(--surface); }
+  .rcard-head { display: flex; align-items: baseline; gap: 9px; padding: 7px 11px; background: var(--surface-2); border-bottom: 1px solid var(--line-soft); }
+  .rcard-head .n { font-family: var(--mono); font-size: 11.5px; font-weight: 700; }
+  .rcard-body { padding: 10px 11px; }
+
+  @media (max-width: 900px) {
+    .app { height: auto; }
+    .left { grid-template-rows: 320px 7px 320px; }
+    .insp-modal { width: 100%; height: 100%; border-radius: 0; }
+    .insp-cols { grid-template-columns: 1fr; overflow-y: auto; }
+    .insp-col + .insp-col { border-left: none; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><b>Agent Platform</b><span class="tag">本機 Demo · 接真實後端</span></div>
+    <div class="field">
+      <label for="wf">Workflow</label>
+      <select id="wf" title="兩個都能瀏覽設定；能不能真的執行，要看 agent runtime 啟動時綁定的是哪一個 workflow">
+        <option value="" selected>（空白畫布）</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="audio-sel">音檔</label>
+      <select id="audio-sel"></select>
+    </div>
+    <button class="run-btn" id="run" disabled>▶ 執行</button>
+    <button class="ghost-btn" id="add-node" title="從零建立一個新 agent，只做單點測試，不會串進既有 workflow">＋ 新增 Agent</button>
+    <div class="spacer"></div>
+    <div class="runmeta" id="runmeta"></div>
+  </header>
+
+  <div class="body" id="bodyGrid">
+    <div class="left">
+      <section class="canvas" id="canvas">
+        <div id="viewport"><svg class="wires" id="wires"></svg></div>
+        <div class="canvas-empty" id="canvasEmpty"></div>
+        <div class="canvas-hint">拖曳空白處平移 · 滾輪縮放 · 點連線上的標籤看欄位對應</div>
+        <div class="zoombar">
+          <button id="zoom-out" title="縮小">−</button>
+          <span class="lvl" id="zoom-lvl">100%</span>
+          <button id="zoom-in" title="放大">＋</button>
+          <button id="zoom-fit" title="回到預設視角">⤢</button>
+        </div>
+      </section>
+
+      <div class="split split-h" id="splitH"></div>
+
+      <section class="console">
+        <div class="tabs">
+          <button class="tab on" data-pane="log">Call Log <span class="count" id="logcount"></span></button>
+          <button class="tab" data-pane="runs">執行紀錄</button>
+        </div>
+        <div class="console-body">
+          <div class="pane on" id="pane-log"></div>
+          <div class="pane" id="pane-runs"></div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="inspector" id="inspector"></aside>
+    <aside class="inspector" id="create-modal"></aside>
+    <aside class="inspector" id="review-modal"></aside>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// 本機 demo 工具，沒有錯誤上報機制——沒接住的例外原本只會靜靜印在
+// DevTools console，畫面看起來像什麼都沒發生。攔下來至少讓使用者知道
+// 「壞了」跟壞在哪一行，不用開 devtools 才發現。用畫面上的 banner 取代
+// alert()——連續跳好幾次 alert() 之後 Chrome 會跳出「封鎖這個網頁繼續
+// 顯示對話方塊」，之後同一頁的 alert 會被瀏覽器整個吃掉、畫面上什麼都看
+// 不到，這正是這幾輪一直在追的「沒有跳 alert」的頭號嫌疑犯。
+function showError(msg) {
+  console.error(msg);
+  let el = document.getElementById("err-banner");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "err-banner";
+    el.className = "err-banner";
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<pre></pre><button title="關閉">×</button>`;
+  el.querySelector("pre").textContent = msg;
+  el.querySelector("button").addEventListener("click", () => el.remove());
+}
+window.addEventListener("error", e => {
+  showError((e.error ? e.error.message : e.message) + ` (${e.filename}:${e.lineno})`);
+});
+
+const API = "http://localhost:8010";
+const NODE_W = 188, NODE_H = 62;
+const TERMINAL_STATUSES = ["completed", "needs_review", "failed"];
+
+const LABELS = {
+  audio_ref: "音檔", transcript: "逐字稿", involves_exclusion: "涉及除外責任",
+  matched_articles: "命中條款", reason: "判斷理由", should_notify: "是否通知",
+  subject: "通知主旨", body: "通知內容", notified_log: "送出紀錄",
+  mentions_tsmc: "提及台積電", review_reason: "待複核原因", expression: "算式", result: "結果",
+};
+
+// 畫布上真正的節點清單——由 loadWorkflow() 從後端 GET /workflow/{name} 建立。
+const nodes = [];
+
+/* ================= 狀態 ================= */
+
+const state = {
+  selected: null, // 有值＝Agent 設定彈窗開著、開的是哪個節點；null＝彈窗關閉
+  catalog: { models: [], tools: {} }, // GET /catalog
+  samples: [], // GET /samples
+  workflowList: [], // GET /workflows（workflow 跟 agent 都有，populateWorkflowSelect() 分組顯示）
+  currentWorkflow: "", currentWorkflowKind: "",
+  audio: "",
+  running: false, poller: null, pollCount: 0, timedOut: false,
+  liveThreadId: null, // 這個瀏覽器分頁最近一次按「執行」拿到的 thread_id
+  viewId: null, // 目前主控台/節點著色在看哪個 thread_id 的資料；null＝還沒執行過
+  snapshots: {}, // threadId -> GET /run/{thread_id} 的原始回應（一次抓到就整包快取）
+  history: [], // [{threadId, when, workflow, audio}]——只記這個分頁本次開啟後跑過的，重新整理會清空（後端沒有「列出所有執行」的 API）
+  expanded: new Set(),
+  openResults: new Set(),
+  midTab: "prompt",
+  testInput: {}, testOut: {}, testing: null,
+  creating: null, // 有值＝「新增 Agent」表單開著（草稿內容），null＝關閉
+  schemaEdit: {}, // n.id -> {inputFields[], outputFields[]}——獨立 agent 的 schema 編輯緩衝區，lazy init，見 ensureSchemaEdit()
+  memNode: null, memTab: "semantic", memPath: "", // 長期記憶分頁目前開著哪個 agent/子分頁/瀏覽路徑
+  memCache: {}, // "<n.id>|<kind>|<path>" -> GET /agent/{name}/memory/... 的回應，見 loadMemory()
+  pendingCounts: {}, // n.id -> {episodic:[...], procedural:[...]}（GET /memory/pending 兩個 kind 的結果），見 loadPendingCounts()
+  episodicByKey: {}, // n.id -> {key: content}，來源案例 hover 用，見 loadEpisodicByKey()
+  evalCases: undefined, // GET /memory/eval-cases 的靜態案例清單（跟 scope 無關，全域一份）；undefined=沒抓過，"loading"=抓取中，見 loadEvalCases()
+  review: null, // 有值＝記憶蒸餾器 modal 開著（見 openReviewModal()），null＝關閉
+};
+
+const nodeById = id => nodes.find(n => n.id === id);
+const pad = n => String(n).padStart(2, "0");
+const fmtTime = iso => { const d = new Date(iso); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); };
+
+function currentSnap() {
+  return state.viewId ? state.snapshots[state.viewId] || null : null;
+}
+
+function slotChanged(n, key) {
+  const d = DEFAULTS[n.id];
+  if (!d) return false;
+  if (key === "model") return n.model !== d.model;
+  return n.memory !== d.memory;
+}
+
+const allTools = n => n.servers.flatMap(s => s.tools.map(t => ({ ...t, full: s.name + "__" + t.name })));
+const toolOn = (n, full) => allTools(n).some(t => t.full === full && t.on);
+
+// n.id -> {model, memory} 剛存檔成功時的樣子，slotChanged() 拿來跟目前值比較、
+// 決定要不要顯示「已更換」標籤。工具分頁改成唯讀清單（只列已授權的，不能在
+// 這裡勾選變更）之後，工具就沒有「已更換」這回事可比了。
+const DEFAULTS = {};
+function snapshotDefaults(n) {
+  DEFAULTS[n.id] = { model: n.model, memory: n.memory };
+}
+
+/* ================= 從後端資料建節點 ================= */
+
+function schemaToFields(schema) {
+  const props = (schema && schema.properties) || {};
+  const required = new Set((schema && schema.required) || []);
+  return Object.entries(props).map(([k, p]) => ({
+    k, req: required.has(k),
+    t: p.type === "array" ? ((p.items && p.items.type) ? p.items.type + "[]" : "array") : (p.type || "string"),
+  }));
+}
+
+function isGranted(grantedPatterns, fullName) {
+  if (grantedPatterns.includes(fullName)) return true;
+  return grantedPatterns.includes(fullName.split("__")[0] + "__*");
+}
+
+/** 這個 agent 掛了哪些 MCP server／工具——目錄本身（server/工具名/schema）
+ * 來自平台共用的 GET /catalog，這個 agent 實際開了哪些則是 step.tools
+ * （resolve_allowed() 算出的授權集合，見 demo/api.py）。跟舊版不同：目錄
+ * 現在是真的所有 agent 共用一份，不是每個 agent 各自從零挑。 */
+function buildNodeServers(grantedTools) {
+  const byServer = {};
+  Object.entries(state.catalog.tools).forEach(([full, info]) => {
+    const tool = full.slice(info.server.length + 2);
+    (byServer[info.server] = byServer[info.server] || []).push({ name: tool, full, on: isGranted(grantedTools, full) });
+  });
+  return Object.entries(byServer).map(([name, tools]) => ({ name, tools }));
+}
+
+/** 把後端一份 step config 套進既有節點——初次建節點跟每次 PUT 存檔回來都
+ * 走這條，兩處不用各寫一份。只覆寫「後端管的」欄位（model/prompt/工具/記憶）
+ * ，畫布座標、desc、schema、mapping 這些前端自己的東西不動。存完順手
+ * snapshotDefaults()，「已更換」標籤就是拿這裡存的值跟目前值比。 */
+function applyStepConfig(n, step) {
+  n.model = step.model;
+  n.memory = step.memory_enabled;
+  n.memoryLocked = !step.memory_capable;
+  n.memoryNote = step.memory_capable ? "" : "這個 agent 沒有長期記憶授權可以開。";
+  n.namespaces = step.memory_namespaces || [];
+  n.servers = buildNodeServers(step.tools);
+  n.promptSystem = step.prompt ? step.prompt.system : "";
+  n.promptUser = step.prompt ? step.prompt.user : "";
+  // schema/output 只有獨立 agent（見 colInput/colOutput 的 currentWorkflowKind
+  // 判斷）能編輯，但一律照後端最新版本刷新——workflow 裡的 step 這幾樣也是
+  // 會變的（只是變的來源是別人手動改 YAML，不是這個 UI），跟 model/prompt
+  // 用同一條刷新路徑。
+  n.inputSchema = schemaToFields(step.input_schema);
+  n.outputSchema = schemaToFields(step.output_schema);
+  n.rawInputMapping = step.input_mapping || {};
+  n.output = step.output || {};
+  snapshotDefaults(n);
+}
+
+function nodeFromStepConfig(step, index, last) {
+  const n = {
+    id: step.name, desc: step.name,
+    x: last ? last.x + 260 : 70, y: last ? last.y : 90,
+    mapping: {}, // resolveMappingDisplay() 填
+  };
+  applyStepConfig(n, step);
+  return n;
+}
+
+/** 把 PUT /workflow/{name}/step/{step} 回傳的整包 workflow（跟 GET 同形狀）
+ * 套回畫布上對應的節點。後端每次回的是完整清單，這裡全套一遍而不是只套
+ * 剛存的那個 step，省得另外分岔一條「只更新一個節點」的路徑。 */
+function applyWorkflowResponse(data) {
+  data.steps.forEach(step => {
+    const n = nodeById(step.name);
+    if (n) applyStepConfig(n, step);
+  });
+}
+
+async function saveStep(n, patch) {
+  try {
+    const res = await fetch(`${API}/workflow/${state.currentWorkflow}/step/${n.id}`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    applyWorkflowResponse(await res.json());
+    resolveMappingDisplay(); // 欄位可能剛被改過（獨立 agent 的 schema 編輯），來源對應要重算
+  } catch (e) {
+    showError("儲存失敗：" + e.message);
+  }
+  renderNodes(); renderInspector();
+}
+
+/** 把後端的 input_mapping（{field: {from: "steps.<step>.<field>"} | {const} |
+ * {expr}}）轉成畫面要顯示的形狀，順便補上後端「沒宣告就同名比對」的隱含規則
+ * （orchestrator/workflow_def.py::resolve_step_input()）——這只是給畫面看的
+ * 唯讀推導，實際執行永遠是後端自己那套邏輯算的，不是這裡。 */
+function resolveMappingDisplay() {
+  nodes.forEach((n, idx) => {
+    const upstream = nodes.slice(0, idx);
+    n.inputSchema.forEach(f => {
+      const raw = n.rawInputMapping[f.k];
+      if (raw) {
+        if (raw.const !== undefined) { n.mapping[f.k] = { const: raw.const }; return; }
+        if (raw.expr !== undefined) { n.mapping[f.k] = { expr: raw.expr }; return; }
+        if (raw.from) {
+          const parts = raw.from.split(".");
+          n.mapping[f.k] = { from: parts.length === 3 ? `${parts[1]}.${parts[2]}` : raw.from };
+          return;
+        }
+      }
+      if (idx === 0) { n.mapping[f.k] = { from: "$run" }; return; }
+      for (let i = upstream.length - 1; i >= 0; i--) {
+        if (upstream[i].outputSchema.some(o => o.k === f.k)) {
+          n.mapping[f.k] = { from: `${upstream[i].id}.${f.k}`, implicit: true };
+          return;
+        }
+      }
+      n.mapping[f.k] = {};
+    });
+  });
+}
+
+/** 這條連線上有幾個欄位真的在傳資料 */
+function edgeFieldCount(a, b) {
+  return Object.values(b.mapping).filter(m => m.from && m.from.startsWith(a.id + ".")).length;
+}
+
+/* ================= 執行狀態 → 節點著色 ================= */
+
+function computeStatusMap() {
+  const snap = currentSnap();
+  const map = {};
+  if (!snap || !snap.current_step) { nodes.forEach(n => (map[n.id] = "idle")); return map; }
+  const idx = nodes.findIndex(n => n.id === snap.current_step);
+  nodes.forEach((n, i) => {
+    if (idx === -1) map[n.id] = "idle";
+    else if (i < idx) map[n.id] = "done";
+    else if (i === idx) map[n.id] = snap.status === "running" ? "running" : snap.status === "completed" ? "done" : "bad";
+    else map[n.id] = "idle";
+  });
+  return map;
+}
+
+/** 這個欄位這次執行實際解析出來的值——從真實的 state_payload 裡讀
+ * （state_payload._steps.<step>.<field> 是每個成功步驟的完整輸出，
+ * state_payload.<field> 是觸發這次執行時給的原始輸入），不是用假資料猜的。*/
+function resolvedValueFor(n, fieldKey) {
+  const snap = currentSnap();
+  if (!snap || !snap.state_payload) return undefined;
+  const m = n.mapping[fieldKey] || {};
+  if (m.const !== undefined) return m.const;
+  if (m.from === "$run") return snap.state_payload[fieldKey];
+  if (m.from) {
+    const [srcId, srcField] = m.from.split(".");
+    const steps = snap.state_payload._steps || {};
+    return steps[srcId] ? steps[srcId][srcField] : undefined;
+  }
+  return undefined;
+}
+
+/* ================= 執行控制 ================= */
+
+function stopRun() {
+  clearInterval(state.poller);
+  state.poller = null;
+  state.running = false;
+}
+
+async function startRun() {
+  if (!(nodes.length > 0 && state.currentWorkflowKind === "workflow")) return;
+  stopRun();
+  state.timedOut = false;
+  state.pollCount = 0;
+  state.expanded.clear();
+  setTab("log");
+
+  let thread_id;
+  try {
+    const res = await fetch(`${API}/run`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflow: state.currentWorkflow, payload: { audio_ref: state.audio } }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    ({ thread_id } = await res.json());
+  } catch (e) {
+    showError("啟動執行失敗：" + e.message);
+    return;
+  }
+
+  state.liveThreadId = thread_id;
+  state.viewId = thread_id;
+  state.running = true;
+  state.snapshots[thread_id] = { current_step: nodes[0].id, status: "running", state_payload: {}, calls: [] };
+  renderAll();
+
+  const poll = async () => {
+    state.pollCount++;
+    if (state.pollCount > 90) { stopRun(); state.timedOut = true; renderAll(); return; }
+    try {
+      const res = await fetch(`${API}/run/${thread_id}`);
+      if (res.ok) {
+        const data = await res.json();
+        state.snapshots[thread_id] = data;
+        if (TERMINAL_STATUSES.includes(data.status)) {
+          stopRun();
+          if (!state.history.some(h => h.threadId === thread_id)) {
+            state.history.unshift({ threadId: thread_id, when: "剛剛", workflow: state.currentWorkflow, audio: state.audio });
+          }
+        }
+      }
+    } catch (e) { /* 暫時連不上，下一輪 poll 再試 */ }
+    renderAll();
+  };
+  state.poller = setInterval(poll, 1000);
+  poll();
+}
+
+async function viewRun(threadId) {
+  state.viewId = threadId;
+  if (!state.snapshots[threadId]) {
+    try {
+      const res = await fetch(`${API}/run/${threadId}`);
+      if (res.ok) state.snapshots[threadId] = await res.json();
+    } catch (e) { /* ignore */ }
+  }
+  state.expanded.clear();
+  renderAll();
+}
+
+/* ================= 載入 workflow ================= */
+
+async function loadWorkflow(value) {
+  stopRun();
+  nodes.length = 0;
+  Object.keys(DEFAULTS).forEach(k => delete DEFAULTS[k]);
+  state.selected = null;
+  state.testInput = {}; state.testOut = {}; state.testing = null;
+  state.schemaEdit = {};
+  state.memCache = {}; state.memNode = null;
+  state.history = [];
+  state.snapshots = {};
+  state.viewId = null; state.liveThreadId = null; state.timedOut = false;
+  state.expanded.clear();
+  state.openResults.clear();
+  state.currentWorkflow = value;
+  state.currentWorkflowKind = "";
+  populateAudioSelect();
+
+  if (value) {
+    try {
+      const res = await fetch(`${API}/workflow/${value}`);
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      state.currentWorkflowKind = data.kind;
+      let last = null;
+      data.steps.forEach((step, i) => { const n = nodeFromStepConfig(step, i, last); nodes.push(n); last = n; });
+      resolveMappingDisplay();
+    } catch (e) {
+      console.error("failed to load workflow", value, e);
+      showError(`載入 ${value} 失敗：` + e.message);
+    }
+  }
+  renderAll();
+}
+
+/* ================= 新增 Agent ================= */
+
+// 一個新 agent 從零開始要決定的東西——name/model/prompt/工具跟既有節點的
+// 設定分頁形狀差不多（buildNodeServers([]) 給的是「全部工具都還沒勾」的
+// 清單），輸入/輸出欄位則是全新的，既有節點目前不能編 schema（見
+// docs/ui-backend-integration-plan.md §6），所以沒有既有 UI 可以搬。
+const FIELD_TYPES = ["string", "number", "boolean", "array"];
+const OUTPUT_FROM = [["model", "模型判斷"], ["tool_log", "工具呼叫紀錄"]];
+
+function freshDraft() {
+  return {
+    name: "", model: state.catalog.models[0] || "",
+    promptSystem: "", promptUser: "",
+    servers: buildNodeServers([]),
+    inputFields: [], outputFields: [],
+  };
+}
+
+function openCreateAgent() {
+  state.creating = freshDraft();
+  renderCreateModal();
+}
+
+function closeCreateAgent() {
+  state.creating = null;
+  renderCreateModal();
+}
+
+function fieldRowHtml(f, idx, kind) {
+  const isOut = kind === "output";
+  return `<div class="field-row" data-kind="${kind}" data-idx="${idx}">
+    <input type="text" class="fr-name" placeholder="欄位名" value="${f.name}">
+    <select class="fr-type">${FIELD_TYPES.map(t => `<option ${t === f.type ? "selected" : ""}>${t}</option>`).join("")}</select>
+    ${isOut
+      ? `<select class="fr-from">${OUTPUT_FROM.map(([v, l]) => `<option value="${v}" ${v === f.from ? "selected" : ""}>${l}</option>`).join("")}</select>`
+      : `<label class="check"><input type="checkbox" class="fr-req" ${f.required ? "checked" : ""}>必填</label>`}
+    <button class="ghost-btn fr-remove" type="button" title="移除">×</button>
+  </div>`;
+}
+
+function renderCreateModal() {
+  const modal = document.getElementById("create-modal");
+  if (!state.creating) { modal.classList.remove("open"); modal.innerHTML = ""; return; }
+  const d = state.creating;
+
+  const servers = d.servers.map((s, si) => `<div class="srv">
+      <div class="srv-head" style="cursor:default"><span class="srv-name">${s.name}</span></div>
+      <div class="srv-tools">${s.tools.map((t, ti) => `
+        <label class="check"><input type="checkbox" data-dsrv="${si}" data-dtool="${ti}" ${t.on ? "checked" : ""}><span class="lbl">${t.name}</span></label>`).join("")}</div>
+    </div>`).join("");
+
+  modal.classList.add("open");
+  modal.innerHTML = `
+    <div class="insp-backdrop" id="create-backdrop"></div>
+    <div class="insp-modal" style="width:min(640px,94vw);height:min(780px,92vh)">
+      <div class="insp-modal-head"><h2>＋ 新增 Agent</h2><button class="insp-close" id="create-close" title="關閉">×</button></div>
+      <div class="insp-col">
+        <div class="test">
+          <label class="tl">名稱</label>
+          <input type="text" id="draft-name" value="${d.name}" placeholder="小寫英數字與底線，例如 calc_agent">
+          <label class="tl">模型</label>
+          <select id="draft-model">${state.catalog.models.map(m => `<option ${m === d.model ? "selected" : ""}>${m}</option>`).join("")}</select>
+          <div class="sect-title"><span>工具</span></div>
+          ${servers}
+          <label class="tl">Prompt · System</label>
+          <textarea id="draft-psys" rows="3">${d.promptSystem}</textarea>
+          <label class="tl">Prompt · User（可用 {{ input.欄位名 }} 帶入輸入欄位）</label>
+          <textarea id="draft-pusr" rows="2">${d.promptUser}</textarea>
+          <div class="sect-title"><span>輸入欄位</span><button class="ghost-btn" id="add-input-field" type="button">＋ 新增</button></div>
+          <p class="hint">只定義格式驗證（型別／必填），不會自動出現在模型看到的內容裡——要在上面 Prompt 裡用 <span class="mono">{{ input.欄位名 }}</span> 手動帶入，模型才看得到這個值。</p>
+          ${d.inputFields.map((f, i) => fieldRowHtml(f, i, "input")).join("") || `<p class="hint">目前沒有輸入欄位。</p>`}
+          <div class="sect-title"><span>輸出欄位</span><button class="ghost-btn" id="add-output-field" type="button">＋ 新增</button></div>
+          <p class="hint">「模型判斷」：模型直接輸出這個值，型別用 string/number/boolean 即可。「工具呼叫紀錄」：給的是這次執行呼叫過的所有工具紀錄組成的陣列，不是單一數值，型別要宣告 array——不確定的話選「模型判斷」比較不會踩坑。</p>
+          ${d.outputFields.map((f, i) => fieldRowHtml(f, i, "output")).join("") || `<p class="hint">目前沒有輸出欄位。</p>`}
+          <div class="test-actions">
+            <button class="run-btn" id="draft-create" type="button">建立</button>
+            <button class="ghost-btn" id="draft-cancel" type="button">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  modal.querySelector("#create-close").addEventListener("click", closeCreateAgent);
+  modal.querySelector("#create-backdrop").addEventListener("click", closeCreateAgent);
+  modal.querySelector("#draft-cancel").addEventListener("click", closeCreateAgent);
+  modal.querySelector("#draft-name").addEventListener("input", e => { d.name = e.target.value; });
+  modal.querySelector("#draft-model").addEventListener("change", e => { d.model = e.target.value; });
+  modal.querySelector("#draft-psys").addEventListener("input", e => { d.promptSystem = e.target.value; });
+  modal.querySelector("#draft-pusr").addEventListener("input", e => { d.promptUser = e.target.value; });
+  modal.querySelectorAll("[data-dsrv]").forEach(box => box.addEventListener("change", () => {
+    d.servers[+box.dataset.dsrv].tools[+box.dataset.dtool].on = box.checked;
+  }));
+  modal.querySelector("#add-input-field").addEventListener("click", () => { d.inputFields.push({ name: "", type: "string", required: true }); renderCreateModal(); });
+  modal.querySelector("#add-output-field").addEventListener("click", () => { d.outputFields.push({ name: "", type: "string", from: "model" }); renderCreateModal(); });
+  modal.querySelectorAll(".field-row").forEach(row => {
+    const list = row.dataset.kind === "input" ? d.inputFields : d.outputFields;
+    const idx = +row.dataset.idx;
+    row.querySelector(".fr-name").addEventListener("input", e => { list[idx].name = e.target.value; });
+    row.querySelector(".fr-type").addEventListener("change", e => { list[idx].type = e.target.value; });
+    const req = row.querySelector(".fr-req");
+    if (req) req.addEventListener("change", e => { list[idx].required = e.target.checked; });
+    const from = row.querySelector(".fr-from");
+    if (from) from.addEventListener("change", e => { list[idx].from = e.target.value; });
+    row.querySelector(".fr-remove").addEventListener("click", () => { list.splice(idx, 1); renderCreateModal(); });
+  });
+  modal.querySelector("#draft-create").addEventListener("click", createDraftAgent);
+}
+
+/** 輸入欄位的「必填」是每欄自己勾的；輸出欄位沒有必填勾選框——一個宣告了
+ * 的輸出欄位本來就是預期一定會產出的，所以一律列進 required。 */
+function toSchema(fields, allRequired) {
+  const named = fields.filter(f => f.name);
+  return {
+    type: "object",
+    properties: Object.fromEntries(named.map(f => [f.name, { type: f.type }])),
+    required: named.filter(f => allRequired || f.required).map(f => f.name),
+  };
+}
+
+/** 獨立 agent（agent_*.yaml）建立之後，輸入/輸出欄位還能繼續編輯——跟既有
+ * workflow 裡的 step 不一樣，那些是唯讀的（見 colInput/colOutput 的
+ * currentWorkflowKind 判斷、docs/ui-backend-integration-plan.md §6）。這裡
+ * 直接重用新增 agent 表單那套 fieldRowHtml/toSchema，欄位形狀一致。
+ *
+ * 編輯緩衝區只在「這個節點第一次要顯示」時從後端當下的 schema 建一次，之後
+ * 不管存檔成功與否都不會被覆寫（除非切換 workflow）——這樣「新增一列還沒
+ * 取名字」這種還沒存進後端的中間狀態，不會因為存檔動作本身的回應把它蓋掉。*/
+function ensureSchemaEdit(n) {
+  if (!state.schemaEdit[n.id]) {
+    state.schemaEdit[n.id] = {
+      inputFields: n.inputSchema.map(f => ({ name: f.k, type: f.t, required: f.req })),
+      outputFields: n.outputSchema.map(f => ({ name: f.k, type: f.t, from: (n.output[f.k] || {}).from || "model" })),
+    };
+  }
+  return state.schemaEdit[n.id];
+}
+
+async function saveSchema(n) {
+  const edit = ensureSchemaEdit(n);
+  await saveStep(n, {
+    input_schema: toSchema(edit.inputFields, false),
+    output_schema: toSchema(edit.outputFields, true),
+    output: Object.fromEntries(edit.outputFields.filter(f => f.name).map(f => [f.name, { from: f.from }])),
+  });
+  // 欄位形狀可能變了（改名/新增/刪除）——單點測試那邊快取的輸入框跟上次結果
+  // 都是照舊 schema 建的，不清掉的話會顯示對不上新欄位的殘留資料。
+  delete state.testInput[n.id];
+  delete state.testOut[n.id];
+  renderInspector();
+}
+
+async function createDraftAgent() {
+  const d = state.creating;
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(d.name)) { showError("名稱格式錯誤：小寫英文開頭，只能包含小寫英數字與底線"); return; }
+  if (!d.promptSystem || !d.promptUser) { showError("Prompt 的 system 跟 user 都要填"); return; }
+
+  const body = {
+    name: d.name, model: d.model,
+    prompt: { system: d.promptSystem, user: d.promptUser },
+    input_schema: toSchema(d.inputFields, false),
+    output_schema: toSchema(d.outputFields, true),
+    output: Object.fromEntries(d.outputFields.filter(f => f.name).map(f => [f.name, { from: f.from }])),
+    tools: d.servers.flatMap(s => s.tools.filter(t => t.on).map(t => s.name + "__" + t.name)),
+  };
+
+  try {
+    const res = await fetch(`${API}/agent`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+  } catch (e) {
+    showError("建立失敗：" + e.message);
+    return;
+  }
+
+  state.creating = null;
+  renderCreateModal();
+  document.getElementById("wf").value = ""; // agent_* 不在 workflow 下拉裡，見 GET /workflows 的 kind 過濾
+  await loadWorkflow("agent_" + d.name);
+  if (nodeById(d.name)) { // 剛剛載入失敗的話 nodes 是空的，不用開一個不存在的節點
+    state.selected = d.name;
+    state.midTab = "prompt";
+    renderAll();
+  }
+}
+
+/* ================= 畫布 ================= */
+
+const canvas = document.getElementById("canvas");
+const viewport = document.getElementById("viewport");
+const wires = document.getElementById("wires");
+const cam = { x: 0, y: 0, k: 1 };
+
+function applyCam() {
+  viewport.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.k})`;
+  canvas.style.backgroundSize = `${22 * cam.k}px ${22 * cam.k}px`;
+  canvas.style.backgroundPosition = `${cam.x}px ${cam.y}px`;
+  document.getElementById("zoom-lvl").textContent = Math.round(cam.k * 100) + "%";
+}
+function zoomAt(px, py, factor) {
+  const k = Math.min(2, Math.max(0.4, cam.k * factor));
+  const r = k / cam.k;
+  cam.x = px - (px - cam.x) * r; cam.y = py - (py - cam.y) * r; cam.k = k;
+  applyCam();
+}
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+}, { passive: false });
+canvas.addEventListener("pointerdown", e => {
+  if (e.target.closest(".node") || e.target.closest(".zoombar") || e.target.closest(".edge-label")) return;
+  canvas.setPointerCapture(e.pointerId);
+  canvas.classList.add("panning");
+  const sx = e.clientX - cam.x, sy = e.clientY - cam.y;
+  const move = ev => { cam.x = ev.clientX - sx; cam.y = ev.clientY - sy; applyCam(); };
+  const up = () => {
+    canvas.classList.remove("panning");
+    canvas.removeEventListener("pointermove", move);
+    canvas.removeEventListener("pointerup", up);
+  };
+  canvas.addEventListener("pointermove", move);
+  canvas.addEventListener("pointerup", up);
+});
+document.getElementById("zoom-in").addEventListener("click", () => { const r = canvas.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.2); });
+document.getElementById("zoom-out").addEventListener("click", () => { const r = canvas.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1 / 1.2); });
+document.getElementById("zoom-fit").addEventListener("click", () => { cam.x = 0; cam.y = 0; cam.k = 1; applyCam(); });
+
+function renderNodes() {
+  const statusMap = computeStatusMap();
+  const liveIds = new Set(nodes.map(n => "node-" + n.id));
+  viewport.querySelectorAll(".node").forEach(el => { if (!liveIds.has(el.id)) el.remove(); });
+
+  nodes.forEach(n => {
+    let el = document.getElementById("node-" + n.id);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "node-" + n.id;
+      el.className = "node";
+      viewport.appendChild(el);
+      makeDraggable(el, n);
+    }
+    const st = statusMap[n.id] || "idle";
+    el.className = "node " + st + (state.selected === n.id ? " sel" : "");
+    el.style.transform = `translate(${n.x}px, ${n.y}px)`;
+    el.innerHTML = `
+      <div class="node-top"><span class="node-name">${n.id}</span><span class="dot"></span></div>
+      <div class="node-desc">${n.desc}</div>`;
+  });
+
+  const emptyEl = document.getElementById("canvasEmpty");
+  emptyEl.style.display = nodes.length === 0 ? "block" : "none";
+  if (nodes.length === 0) emptyEl.innerHTML = "<h1>Hi Desmond! Shall we?</h1>";
+}
+
+function renderWires() {
+  const statusMap = computeStatusMap();
+  const parts = [];
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const a = nodes[i], b = nodes[i + 1];
+    const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2;
+    const dx = Math.max(40, Math.abs(x2 - x1) * 0.5);
+    const sa = statusMap[a.id], sb = statusMap[b.id];
+    const cls = sb === "running" ? "hot" : (sa === "done" && (sb === "done" || sb === "bad")) ? "done" : "";
+    parts.push(`<path class="wire ${cls}" d="M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}" />`);
+    parts.push(`<circle cx="${x1}" cy="${y1}" r="3" fill="var(--ink-3)" /><circle cx="${x2}" cy="${y2}" r="3" fill="var(--ink-3)" />`);
+  }
+  wires.innerHTML = parts.join("");
+
+  viewport.querySelectorAll(".edge-label").forEach(el => el.remove());
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const a = nodes[i], b = nodes[i + 1];
+    const count = edgeFieldCount(a, b);
+    const mx = (a.x + NODE_W + b.x) / 2, my = (a.y + b.y) / 2 + NODE_H / 2;
+    const el = document.createElement("div");
+    el.className = "edge-label" + (count ? "" : " none");
+    el.style.transform = `translate(${mx}px, ${my}px) translate(-50%, -50%)`;
+    el.textContent = count ? `${count} 個欄位` : "未對應";
+    el.title = "點一下看欄位對應";
+    el.addEventListener("click", e => {
+      e.stopPropagation();
+      state.selected = b.id;
+      renderNodes(); renderInspector();
+    });
+    viewport.appendChild(el);
+  }
+}
+
+function makeDraggable(el, n) {
+  let ox = 0, oy = 0, moved = false;
+  el.addEventListener("pointerdown", e => {
+    e.stopPropagation();
+    el.setPointerCapture(e.pointerId);
+    ox = e.clientX / cam.k - n.x; oy = e.clientY / cam.k - n.y; moved = false;
+    const move = ev => {
+      n.x = ev.clientX / cam.k - ox; n.y = ev.clientY / cam.k - oy; moved = true;
+      el.style.transform = `translate(${n.x}px, ${n.y}px)`;
+      renderWires();
+    };
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      if (!moved) { state.selected = n.id; renderNodes(); renderInspector(); }
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  });
+}
+
+/* ================= 欄位呈現 ================= */
+
+function shortVal(v) {
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (Array.isArray(v)) return v.length ? v.join("、") : "（空陣列）";
+  const s = String(v);
+  return s.length > 60 ? s.slice(0, 60) + "…" : s;
+}
+function fieldValue(v) {
+  if (typeof v === "boolean") return `<span class="pill ${v ? "yes" : "no"}">${v ? "是" : "否"}</span>`;
+  if (Array.isArray(v)) return v.length ? v.map(x => `<span class="tagchip">${x}</span>`).join("") : `<span class="mono">（無）</span>`;
+  if (typeof v === "string" && v.length > 40) return `<div class="longtext">${v}</div>`;
+  return `<span class="mono">${v}</span>`;
+}
+function renderFields(obj) {
+  return `<div class="fields">${Object.entries(obj).map(([k, v]) =>
+    `<div class="frow"><span class="fk">${LABELS[k] || k}</span><span class="fv">${fieldValue(v)}</span></div>`).join("")}</div>`;
+}
+
+function renderSchemaReadonly(schema, data, outputDecl) {
+  if (!schema.length) return `<p class="hint">沒有宣告輸出欄位。</p>`;
+  return `<div class="schema">${schema.map(f => {
+    const has = data && data[f.k] !== undefined;
+    const decl = (outputDecl || {})[f.k];
+    const originText = !decl ? "" : decl.from === "model" ? "模型判斷" : decl.from === "tool_log" ? "工具呼叫紀錄"
+      : (decl.from || "").startsWith("tool:") ? `來自工具 ${decl.from.slice(5)}` : "";
+    return `<div class="srow">
+      <div class="srow-top">
+        <span class="sname">${f.k}</span><span class="stype">${f.t}</span>
+        ${f.req ? `<span class="sreq">必填</span>` : ""}
+        <span class="slabel">${LABELS[f.k] || ""}</span>
+        ${originText ? `<span class="origin tool">${originText}</span>` : ""}
+      </div>
+      ${has ? `<div class="sval">${fieldValue(data[f.k])}</div>` : `<span class="sample">尚未執行</span>`}
+    </div>`;
+  }).join("")}</div>`;
+}
+
+/* ================= 右側：輸入 / 輸出（唯讀） ================= */
+
+const inspector = document.getElementById("inspector");
+
+function mapRowReadonly(n, f) {
+  const m = n.mapping[f.k] || {};
+  const srcText = m.const !== undefined ? `固定值：${shortVal(m.const)}`
+    : m.expr !== undefined ? `運算式：${m.expr}`
+    : m.from === "$run" ? "執行時輸入"
+    : m.from ? `來自 ${m.from}${m.implicit ? "（同名對應）" : ""}`
+    : "未對應";
+  const val = resolvedValueFor(n, f.k);
+  const resolved = val === undefined
+    ? `<div class="resolved sample-only"><span class="ar">→</span><span class="val">${currentSnap() ? "沒有值" : "尚未執行"}</span></div>`
+    : `<div class="resolved"><span class="ar">→</span><span class="val">${shortVal(val)}</span></div>`;
+  return `<div class="maprow">
+    <div class="srow-top">
+      <span class="sname">${f.k}</span><span class="stype">${f.t}</span>
+      ${f.req ? `<span class="sreq">必填</span>` : ""}
+      <span class="slabel">${LABELS[f.k] || ""}</span>
+    </div>
+    <div class="mapline"><span class="lbl">來源</span><span class="mono">${srcText}</span></div>
+    ${resolved}
+  </div>`;
+}
+
+function colInput(n) {
+  // 唯讀限制只對「串在既有 workflow 裡的 step」成立——master/worker 各自持
+  // 有一份 process 啟動時的 schema 快照，改了不重啟會兜不起來。獨立 agent
+  // 不走 master/worker，每次請求都直接讀檔，所以可以自由編輯（見
+  // demo/spec_writer.py 的 module docstring、docs/ui-backend-integration-plan.md §6）。
+  if (state.currentWorkflowKind === "agent") {
+    const edit = ensureSchemaEdit(n);
+    return `
+      <div class="insp-col-title">輸入</div>
+      <p class="hint">只定義格式驗證，不會自動出現在模型看到的內容裡——要在 Prompt 裡用 <span class="mono">{{ input.欄位名 }}</span> 手動帶入，模型才看得到這個值。</p>
+      <div class="sect-title"><span>輸入欄位</span><button class="ghost-btn" id="schema-add-input" type="button">＋ 新增</button></div>
+      ${edit.inputFields.map((f, i) => fieldRowHtml(f, i, "input")).join("") || `<p class="hint">目前沒有輸入欄位。</p>`}`;
+  }
+  return `
+    <div class="insp-col-title">輸入</div>
+    <div class="sect-title"><span>來源對應</span><span>${currentSnap() ? "本次執行的值" : "尚未執行"}</span></div>
+    ${n.inputSchema.length ? n.inputSchema.map(f => mapRowReadonly(n, f)).join("") : `<p class="hint">沒有宣告輸入欄位。</p>`}`;
+}
+
+function colOutput(n) {
+  const snap = currentSnap();
+  const steps = snap && snap.state_payload ? snap.state_payload._steps || {} : {};
+  const val = steps[n.id];
+  const isCurrent = snap && snap.current_step === n.id;
+  const bad = isCurrent && snap.status !== "running" && snap.status !== "completed";
+
+  if (state.currentWorkflowKind === "agent") {
+    const edit = ensureSchemaEdit(n);
+    return `
+      <div class="insp-col-title">輸出</div>
+      <p class="hint">「模型判斷」：模型直接輸出這個值。「工具呼叫紀錄」：這次執行呼叫過的所有工具紀錄組成的陣列，不是單一數值——不確定就選「模型判斷」。</p>
+      <div class="sect-title"><span>輸出欄位</span><button class="ghost-btn" id="schema-add-output" type="button">＋ 新增</button></div>
+      ${edit.outputFields.map((f, i) => fieldRowHtml(f, i, "output")).join("") || `<p class="hint">目前沒有輸出欄位。</p>`}
+      ${val ? `<div class="sect-title" style="margin-top:16px"><span>上次執行結果</span></div>
+        <div class="io-block ${bad ? "bad" : ""}">${renderSchemaReadonly(n.outputSchema, val, n.output)}</div>` : ""}`;
+  }
+
+  return `
+    <div class="insp-col-title">輸出</div>
+    <div class="io-block ${bad ? "bad" : ""}">
+      <div class="k"><span>▲ 輸出</span><span>${val ? "" : "尚未執行"}</span></div>
+      ${renderSchemaReadonly(n.outputSchema, val, n.output)}
+      ${bad && snap.state_payload.review_reason ? `<div class="sval" style="margin-top:8px">${renderFields({ review_reason: snap.state_payload.review_reason })}</div>` : ""}
+    </div>`;
+}
+
+function testDefaults(n) {
+  const out = {};
+  n.inputSchema.forEach(f => {
+    const v = resolvedValueFor(n, f.k);
+    out[f.k] = v !== undefined ? v
+      : n.id === "stt" && f.k === "audio_ref" ? (state.audio || "")
+      : f.t === "boolean" ? true : "";
+  });
+  return out;
+}
+
+function renderPromptBox(n, field, id) {
+  const text = n[field] || "";
+  const vals = {};
+  n.inputSchema.forEach(f => { const v = resolvedValueFor(n, f.k); if (v !== undefined) vals[f.k] = v; });
+  const filled = text.replace(/\{\{\s*input\.(\w+)\s*\}\}/g, (_, k) => `<b>${vals[k] === undefined ? "（缺）" : shortVal(vals[k])}</b>`);
+  return `<textarea class="prompt-box" id="${id}">${text}</textarea><div class="prompt-preview">${filled}</div>`;
+}
+
+function tabTest(n) {
+  const vals = state.testInput[n.id] || testDefaults(n);
+  const busy = state.testing === n.id;
+  const out = state.testOut[n.id];
+
+  const inputs = n.inputSchema.map(f => {
+    if (n.id === "stt" && f.k === "audio_ref") {
+      return `<label class="tl">${f.k}（${f.t}）</label>
+        <select data-tin="${f.k}">${state.samples.map(a => `<option value="samples/${a}" ${("samples/" + a) === vals[f.k] ? "selected" : ""}>${a}</option>`).join("")}</select>`;
+    }
+    if (f.t === "boolean") {
+      return `<label class="tl">${f.k}（${f.t}）</label>
+        <div class="boolrow"><input type="checkbox" data-tin="${f.k}" ${vals[f.k] ? "checked" : ""}><span>${vals[f.k] ? "true" : "false"}</span></div>`;
+    }
+    return `<label class="tl">${f.k}（${f.t}）</label>
+      <textarea data-tin="${f.k}" rows="${f.k === "transcript" || f.k === "body" ? 3 : 2}">${vals[f.k] || ""}</textarea>`;
+  }).join("");
+
+  const logRows = out && out.calls ? out.calls.map(c => `
+    <tr><td>${c.node || ""}</td><td><span class="kind ${c.kind}">${c.kind}</span></td>
+      <td>${c.name}</td><td class="num">${c.latency_ms}ms</td>
+      <td><span class="flag">${c.denied ? "DENIED" : c.is_error ? "ERROR" : ""}</span></td></tr>`).join("") : "";
+
+  const outBlock = !out ? "" : `
+    <div class="test-out">
+      <div class="th">
+        <span class="st-pill ${out.status === "ok" ? "completed" : out.status}">${out.status}</span>
+        <span>${n.model}</span>
+        <span style="margin-left:auto;color:${out.status === "ok" ? "var(--ok)" : "var(--bad)"}">${out.status === "ok" ? "✓ 執行成功" : (out.review_reason || out.error || "")}</span>
+      </div>
+      ${out.output ? renderFields(out.output) : ""}
+      <div class="test-log">
+        <div class="sect-title" style="margin:12px 0 6px"><span>這次測試的 call log</span><span>${(out.calls || []).length} 筆</span></div>
+        <table><tbody>${logRows}</tbody></table>
+      </div>
+    </div>`;
+
+  return `<div class="test">
+    ${inputs || `<p class="hint">沒有輸入欄位。</p>`}
+    <div class="test-actions">
+      <button class="run-btn" id="test-run" ${busy ? "disabled" : ""}>${busy ? "測試中…" : "▶ 只測這一格"}</button>
+      <button class="ghost-btn" id="test-fill">重新帶入對應值</button>
+    </div>
+    ${outBlock}
+  </div>`;
+}
+
+async function runNodeTest(n) {
+  const input = state.testInput[n.id] || testDefaults(n);
+  state.testing = n.id;
+  renderInspector();
+  try {
+    const res = await fetch(`${API}/agent/${n.id}/test`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input }),
+    });
+    state.testOut[n.id] = await res.json();
+  } catch (e) {
+    state.testOut[n.id] = { status: "error", error: String(e), calls: [] };
+  }
+  state.testing = null;
+  renderInspector();
+}
+
+function partModel(n) {
+  return `<div class="slot ${slotChanged(n, "model") ? "changed" : ""}">
+    <div class="slot-head"><span class="slot-name">模型</span>
+      ${slotChanged(n, "model") ? `<span class="slot-flag">已更換</span>` : ""}</div>
+    <select id="model-sel">${state.catalog.models.map(m => `<option ${m === n.model ? "selected" : ""}>${m}</option>`).join("")}</select>
+  </div>`;
+}
+
+/** 只列這個 agent「現在真的有」的工具，不是全平台目錄——勾選框只能在這份
+ * 清單內做減法（取消勾選＋存檔＝從 policy.yaml 收回這個工具的授權），不能
+ * 增加清單外的工具，所以不會出現「勾了 notified__send_gmail 之類完全無關
+ * 的工具」這種 2026-08-18 那次決定要避開的狀況。要新增授權還是得去改
+ * policy.yaml，這裡只負責「有權限，但不想讓它用」這種收窄。 */
+function partTools(n) {
+  const granted = allTools(n).filter(t => t.on);
+  const byServer = {};
+  granted.forEach(t => { (byServer[t.full.split("__")[0]] = byServer[t.full.split("__")[0]] || []).push(t); });
+  const servers = Object.entries(byServer).map(([name, tools]) => `<div class="srv">
+      <div class="srv-head" style="cursor:default"><span class="srv-name">${name}</span><span class="srv-count">${tools.length}</span></div>
+      <div class="srv-tools">${tools.map(t => `<label class="check"><input type="checkbox" data-tool="${t.full}" checked><span class="lbl">${t.name}</span></label>`).join("")}</div>
+    </div>`).join("");
+  return `<div class="slot">
+    <div class="slot-head"><span class="slot-name">工具</span>
+      <span class="slot-role">${granted.length} 個工具已授權，取消勾選＝不讓它用</span></div>
+    ${granted.length ? servers : `<p class="hint">這個 agent 目前沒有被授權任何工具。</p>`}
+  </div>`;
+}
+
+/* ================= 長期記憶瀏覽 ================= */
+
+const MEM_TABS = [["semantic", "語意"], ["episodic", "情節"], ["procedural", "程序"], ["review", "待審核"]];
+
+// namespaces 是這個 agent 的 memory.read 授權 pattern（例如
+// "_global/semantic/insurance_product/*"）——第二段就是 kind，這裡只是拿來
+// 判斷「這個 agent 對這個 kind 有沒有任何授權」，決定要不要顯示空狀態。
+function memKindAvailable(n, kind) {
+  return n.namespaces.some(p => p.split("/")[1] === kind);
+}
+
+async function loadMemory(n, kind, path) {
+  const key = `${n.id}|${kind}|${path || ""}`;
+  if (state.memCache[key] !== undefined) return;
+  state.memCache[key] = "loading";
+  try {
+    const url = kind === "semantic"
+      ? `${API}/agent/${n.id}/memory/semantic?prefix=${encodeURIComponent(path || "")}`
+      : `${API}/agent/${n.id}/memory/${kind}`;
+    const res = await fetch(url);
+    state.memCache[key] = res.ok ? await res.json() : { error: await res.text() };
+  } catch (e) {
+    state.memCache[key] = { error: String(e) };
+  }
+  renderInspector();
+}
+
+function renderMemSemantic(n) {
+  if (!memKindAvailable(n, "semantic")) return `<p class="hint">這個 agent 的長期記憶授權裡沒有語意記憶，沒有東西可以逛。</p>`;
+  const key = `${n.id}|semantic|${state.memPath}`;
+  const data = state.memCache[key];
+  if (data === undefined) { loadMemory(n, "semantic", state.memPath); return `<p class="hint">載入中…</p>`; }
+  if (data === "loading") return `<p class="hint">載入中…</p>`;
+  if (data.error) return `<p class="hint">載入失敗：${data.error}</p>`;
+  if (!data.available_tenants || !data.available_tenants.length) return `<p class="hint">這個 agent 的長期記憶授權裡沒有語意記憶，沒有東西可以逛。</p>`;
+
+  const parentPath = data.parent.join("/");
+  return `<div class="mem-here">
+      <span class="lbl">目前位置</span><span class="path">${data.tenant}/${data.scope.join("/") || "（根）"}</span>
+      ${data.scope.length ? `<button class="up" data-mempath="${parentPath}">↑ 回上一層</button>` : ""}
+    </div>
+    ${data.children.length ? `<div class="mem-group">
+      <h4>往下一層 · ${data.children.length} 個子分支</h4>
+      <div class="children">${data.children.map(c => `
+        <div class="child" data-mempath="${(state.memPath ? state.memPath + "/" : "") + c.segment}">
+          <span class="arrow">↳</span><span class="seg">${c.segment}</span><span class="sum">${c.summary || ""}</span>
+        </div>`).join("")}</div></div>` : ""}
+    ${data.items.length ? `<div class="mem-group">
+      <h4>這一層的內容 · ${data.items.length} 筆</h4>
+      <div class="items">${data.items.map(it => `
+        <div class="mem-item">
+          <div class="k"><span>${it.article || it.title || it.key}</span></div>
+          <div class="v">${it.text || JSON.stringify(it)}</div>
+          ${it.applies_to ? `<div class="v sub">適用：${it.applies_to.join("、")}</div>` : ""}
+        </div>`).join("")}</div></div>` : ""}
+    ${data.siblings.length ? `<div class="mem-group">
+      <h4>同一層的其他分支 · ${data.siblings.length} 個</h4>
+      <div class="siblings">${data.siblings.map(s => `<button class="sib" data-mempath="${(parentPath ? parentPath + "/" : "") + s}">${s}</button>`).join("")}</div></div>` : ""}
+    ${!data.children.length && !data.items.length ? `<p class="hint">這一層沒有內容。</p>` : ""}`;
+}
+
+function renderMemFlat(n, kind) {
+  const label = kind === "episodic" ? "情節" : "程序";
+  if (!memKindAvailable(n, kind)) return `<p class="hint">這個 agent 的長期記憶授權裡沒有${label}記憶，沒有東西可以看。</p>`;
+  const key = `${n.id}|${kind}|`;
+  const data = state.memCache[key];
+  if (data === undefined) { loadMemory(n, kind); return `<p class="hint">載入中…</p>`; }
+  if (data === "loading") return `<p class="hint">載入中…</p>`;
+  if (data.error) return `<p class="hint">載入失敗：${data.error}</p>`;
+  // 情節／程序記憶還有 pending 之類的過渡狀態，設定畫面只是給人看「現在
+  // 生效中的規則/案例」，非 active 的先濾掉，不然待審核的半成品混進來會
+  // 讓人以為那些也已經在用了。
+  const active = data.filter(item => item.value.status === "active");
+  if (!active.length) return `<p class="hint">這個 agent 目前沒有生效中的${label}記憶。</p>`;
+
+  if (kind === "episodic") {
+    return `<div class="items">${active.map(e => `
+      <div class="mem-item">
+        <div class="k"><span>${e.namespace[2]} / ${e.namespace[3]}</span><span>${fmtTime(e.created_at)}</span><span class="status-chip ${e.value.status}">${e.value.status}</span></div>
+        <div class="v">${e.value.content.input}</div>
+        <div class="v sub">→ ${e.value.content.output}</div>
+      </div>`).join("")}</div>`;
+  }
+  return `<div class="items">${active.map(p => `
+    <div class="mem-item">
+      <div class="k"><span>${p.namespace[2]} / ${p.namespace[3]}</span><span class="status-chip ${p.value.status}">${p.value.status}</span></div>
+      <div class="v">${p.value.content.rule}</div>
+      ${p.value.rationale ? `<div class="v sub">${p.value.rationale}</div>` : ""}
+    </div>`).join("")}</div>`;
+}
+
+// GET /memory/pending 的兩個 kind（episodic/procedural），一次抓齊快取起來
+// ——待審核 subtab 的入口卡跟審核台 modal 都是同一份資料，不用各抓一次
+// （見 docs/distill-ui-plan.md §2.1 的 badge、§2.2 的兩個分頁）。
+async function loadPendingCounts(nodeId, scope) {
+  if (state.pendingCounts[nodeId] !== undefined) return;
+  state.pendingCounts[nodeId] = "loading";
+  try {
+    const [episodic, procedural] = await Promise.all([
+      fetch(`${API}/memory/pending?scope=${encodeURIComponent(scope)}&kind=episodic`).then(r => r.ok ? r.json() : []),
+      fetch(`${API}/memory/pending?scope=${encodeURIComponent(scope)}&kind=procedural`).then(r => r.ok ? r.json() : []),
+    ]);
+    state.pendingCounts[nodeId] = { episodic, procedural };
+  } catch (e) {
+    state.pendingCounts[nodeId] = { episodic: [], procedural: [] };
+  }
+  renderInspector();
+  renderReviewModal();
+}
+
+function invalidatePendingCounts(nodeId) {
+  delete state.pendingCounts[nodeId];
+}
+
+function reviewBadge(n) {
+  const counts = state.pendingCounts[n.id];
+  if (!counts || counts === "loading") return "";
+  const total = counts.episodic.length + counts.procedural.length;
+  return total ? ` <span class="chip">${total}</span>` : "";
+}
+
+function renderMemReview(n) {
+  if (!memKindAvailable(n, "procedural") && !memKindAvailable(n, "episodic")) {
+    return `<p class="hint">這個 agent 的長期記憶授權裡沒有執行案例或候選規則，沒有東西可以審。</p>`;
+  }
+  const scope = `${state.currentWorkflow}/${n.id}`;
+  const counts = state.pendingCounts[n.id];
+  if (counts === undefined) { loadPendingCounts(n.id, scope); return `<p class="hint">載入中…</p>`; }
+  if (counts === "loading") return `<p class="hint">載入中…</p>`;
+  return `<div class="review-entry">
+    <div class="review-entry-row"><span>執行案例</span><b>${counts.episodic.length}</b></div>
+    <div class="review-entry-row"><span>候選規則</span><b>${counts.procedural.length}</b></div>
+    <button class="run-btn" id="open-review">開啟記憶蒸餾器 →</button>
+  </div>`;
+}
+
+function partMemory(n) {
+  if (state.memNode !== n.id) { state.memNode = n.id; state.memTab = "semantic"; state.memPath = ""; }
+
+  const switchHtml = n.memoryLocked
+    ? `<p class="hint" style="margin:0">${n.memoryNote}</p>`
+    : `<div class="switch ${n.memory ? "on" : ""}" id="mem-switch" role="button" tabindex="0">
+         <span>${n.memory ? "開啟" : "關閉"}</span><span class="toggle"></span></div>`;
+
+  if (n.memoryLocked) {
+    return `<div class="slot"><div class="slot-head"><span class="slot-name">長期記憶</span></div>${switchHtml}</div>`;
+  }
+
+  const tabsHtml = `<div class="subtabs">${MEM_TABS.map(([k, l]) =>
+    `<button class="subtab ${state.memTab === k ? "on" : ""}" data-memtab="${k}">${l}${k === "review" ? reviewBadge(n) : ""}</button>`).join("")}</div>`;
+  const body = state.memTab === "semantic" ? renderMemSemantic(n)
+    : state.memTab === "review" ? renderMemReview(n)
+    : renderMemFlat(n, state.memTab);
+
+  return `<div class="slot">
+    <div class="slot-head"><span class="slot-name">長期記憶</span></div>
+    ${switchHtml}
+    <div class="mem">${tabsHtml}${body}</div>
+  </div>`;
+}
+
+/* ================= 記憶蒸餾審核台（docs/distill-ui-plan.md） =================
+ * 獨立於 Agent 設定彈窗的另一個置中 modal，照 create-modal 那個既有 pattern
+ * ——state.review 有值＝開著，null＝關閉，每次動作後整個重畫 innerHTML 再重綁
+ * 事件（跟 renderCreateModal() 同一套作法）。
+ *
+ * 候選規則審核面板只有三個狀態（見該文件 §S7 的狀態機）：
+ *   idle（未評測）─ 跑評測 →running ─ job 完成 →compared ─ 核准/退回 →離開清單
+ *   compared 底下改動規則文字 → 回到 idle
+ * 用 p.rule / p.evaluatedRule 是否相等 + p.job 是否還在跑，三個值算出畫面在
+ * 哪個狀態，不用另外存一個狀態欄位，也不會因為兩份資料沒同步而對不上。
+ */
+
+async function loadEpisodicByKey(nodeId) {
+  if (state.episodicByKey[nodeId] !== undefined) return;
+  state.episodicByKey[nodeId] = "loading";
+  try {
+    const res = await fetch(`${API}/agent/${nodeId}/memory/episodic`);
+    const items = res.ok ? await res.json() : [];
+    state.episodicByKey[nodeId] = Object.fromEntries(items.map(it => [it.key, it.value.content]));
+  } catch (e) {
+    state.episodicByKey[nodeId] = {};
+  }
+  renderReviewModal();
+}
+
+// evals/check_cases.yaml 的靜態案例清單，跟 scope 無關、全域一份——用來在
+// 「跑評測對照」按下去的當下就能列出這次會測哪些案例（分數還沒回來，先讓
+// 畫面有東西可以看），不用等 job 跑完才第一次看到案例是誰。
+async function loadEvalCases() {
+  if (state.evalCases !== undefined) return;
+  state.evalCases = "loading";
+  try {
+    const res = await fetch(`${API}/memory/eval-cases`);
+    state.evalCases = res.ok ? await res.json() : [];
+  } catch (e) {
+    state.evalCases = [];
+  }
+  renderReviewModal();
+}
+
+// 單一 job 的 setInterval 輪詢，蒸餾/評測各自獨立一份——跟 state.poller
+// （單一 workflow 執行）不是同一個槽位，因為審核台裡可能同時有蒸餾 job 跟
+// 某條候選規則的評測 job 各自在跑，形狀沿用（setInterval + fetch + 到終態就
+// clearInterval），槽位不共用。
+function pollReviewJob(jobId, onDone, onError) {
+  const poller = setInterval(async () => {
+    try {
+      const res = await fetch(`${API}/memory/job/${jobId}`);
+      if (!res.ok) throw new Error(await res.text());
+      const job = await res.json();
+      if (job.status === "running") return;
+      clearInterval(poller);
+      if (job.status === "error") onError(job.error); else onDone(job.result);
+    } catch (e) {
+      clearInterval(poller);
+      onError(e.message);
+    }
+  }, 1500);
+}
+
+function openReviewModal(n) {
+  state.review = { node: n.id, scope: `${state.currentWorkflow}/${n.id}`, tab: "episodic", selectedKey: null, panels: {}, episodicEdits: {}, episodicNotes: {}, distillJob: null, approvedInfo: null };
+  loadEpisodicByKey(n.id);
+  loadEvalCases();
+  renderReviewModal();
+}
+
+function closeReviewModal() {
+  state.review = null;
+  renderReviewModal();
+}
+
+function findPendingItem(rv, kind, key) {
+  const counts = state.pendingCounts[rv.node];
+  if (!counts || counts === "loading") return null;
+  return counts[kind].find(it => it.key === key) || null;
+}
+
+/* ---------- 執行案例分頁 ---------- */
+
+async function approveEpisodic(rv, key, output) {
+  try {
+    const res = await fetch(`${API}/memory/episodic/${key}/approve`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: rv.scope, output: output || null }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+  } catch (e) { showError("核准失敗：" + e.message); return; }
+  delete rv.episodicEdits[key];
+  invalidatePendingCounts(rv.node);
+  renderReviewModal();
+}
+
+function renderReviewEpisodic(rv) {
+  const counts = state.pendingCounts[rv.node];
+  if (counts === undefined) { loadPendingCounts(rv.node, rv.scope); return `<p class="hint">載入中…</p>`; }
+  if (counts === "loading") return `<p class="hint">載入中…</p>`;
+  const items = counts.episodic;
+  if (!items.length) return `<p class="hint">目前沒有待審核的執行案例。</p>`;
+  return `<div class="items">${items.map(it => {
+    const key = it.key;
+    const editing = rv.episodicEdits[key] !== undefined;
+    const note = rv.episodicNotes[key];
+    return `<div class="mem-item">
+      <div class="k"><span>${key}</span><span>${fmtTime(it.created_at)}</span></div>
+      <div class="v">${it.value.content.input}</div>
+      ${editing
+        ? `<textarea class="prompt-box" rows="2" data-eout="${key}">${rv.episodicEdits[key]}</textarea>`
+        : `<div class="v sub">→ ${it.value.content.output}</div>`}
+      <div class="test-actions" style="margin-top:8px">
+        ${editing
+          ? `<button class="run-btn" data-eaction="save" data-ekey="${key}">存檔並核准</button>
+             <button class="ghost-btn" data-eaction="cancel" data-ekey="${key}">取消</button>`
+          : `<button class="run-btn" data-eaction="approve" data-ekey="${key}">核准</button>
+             <button class="ghost-btn" data-eaction="edit" data-ekey="${key}">改寫輸出</button>
+             <button class="ghost-btn" data-eaction="reject" data-ekey="${key}">維持待審核</button>`}
+        ${note ? `<span class="hint" style="margin:0">${note}</span>` : ""}
+      </div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function bindReviewEpisodicEvents(rv) {
+  const modal = document.getElementById("review-modal");
+  modal.querySelectorAll("[data-eout]").forEach(ta => ta.addEventListener("input", () => { rv.episodicEdits[ta.dataset.eout] = ta.value; }));
+  modal.querySelectorAll("[data-eaction]").forEach(btn => btn.addEventListener("click", () => {
+    const key = btn.dataset.ekey;
+    const action = btn.dataset.eaction;
+    if (action === "edit") {
+      const item = findPendingItem(rv, "episodic", key);
+      rv.episodicEdits[key] = item ? item.value.content.output : "";
+      renderReviewModal();
+    } else if (action === "cancel") {
+      delete rv.episodicEdits[key];
+      renderReviewModal();
+    } else if (action === "reject") {
+      // 情節記憶沒有 reject 端點——CLI 的行為就是「什麼都不做，維持
+      // pending」（見 scripts/review_episodic.py module docstring），這裡
+      // 不打任何 API，只是給人一個「有按到」的回饋。
+      rv.episodicNotes[key] = "維持待審核（不會刪除，之後可以再審一次）";
+      renderReviewModal();
+    } else if (action === "approve") {
+      approveEpisodic(rv, key, null);
+    } else if (action === "save") {
+      approveEpisodic(rv, key, rv.episodicEdits[key]);
+    }
+  }));
+}
+
+/* ---------- 候選規則分頁 ---------- */
+
+function ensurePanel(rv, item) {
+  if (!rv.panels[item.key]) {
+    rv.panels[item.key] = { rule: item.value.content.rule, evaluatedRule: null, repeats: 3, model: "", job: null, result: null };
+  }
+  return rv.panels[item.key];
+}
+
+async function runDistill(rv) {
+  rv.distillJob = { status: "running" };
+  renderReviewModal();
+  let job_id;
+  try {
+    const res = await fetch(`${API}/memory/distill`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: rv.scope, limit: 20 }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    ({ job_id } = await res.json());
+  } catch (e) {
+    rv.distillJob = null;
+    showError("啟動蒸餾失敗：" + e.message);
+    renderReviewModal();
+    return;
+  }
+  pollReviewJob(job_id, () => {
+    rv.distillJob = null;
+    invalidatePendingCounts(rv.node);
+    renderReviewModal();
+  }, error => {
+    rv.distillJob = null;
+    showError("蒸餾失敗：" + error);
+    renderReviewModal();
+  });
+}
+
+async function runEvaluate(rv, item) {
+  const p = ensurePanel(rv, item);
+  p.evaluatedRule = p.rule;
+  p.job = { status: "running" };
+  renderReviewModal();
+  let job_id;
+  try {
+    const res = await fetch(`${API}/memory/candidate/${item.key}/evaluate`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: rv.scope, repeats: p.repeats, model: p.model || null }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    ({ job_id } = await res.json());
+  } catch (e) {
+    p.job = null;
+    showError("啟動評測失敗：" + e.message);
+    renderReviewModal();
+    return;
+  }
+  pollReviewJob(job_id, result => {
+    p.job = null;
+    p.result = result;
+    renderReviewModal();
+  }, error => {
+    p.job = null;
+    showError("評測失敗：" + error);
+    renderReviewModal();
+  });
+}
+
+async function approveCandidate(rv, item) {
+  const p = ensurePanel(rv, item);
+  const rewritten = p.rule !== item.value.content.rule ? p.rule : null;
+  let data;
+  try {
+    const res = await fetch(`${API}/memory/candidate/${item.key}/approve`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: rv.scope, rule: rewritten }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    data = await res.json();
+  } catch (e) { showError("核准失敗：" + e.message); return; }
+  rv.approvedInfo = { key: item.key, suggestions: data.regression_suggestions };
+  delete rv.panels[item.key];
+  rv.selectedKey = null;
+  invalidatePendingCounts(rv.node);
+  renderReviewModal();
+}
+
+async function rejectCandidate(rv, item) {
+  try {
+    const res = await fetch(`${API}/memory/candidate/${item.key}/reject`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: rv.scope }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+  } catch (e) { showError("退回失敗：" + e.message); return; }
+  delete rv.panels[item.key];
+  rv.selectedKey = null;
+  invalidatePendingCounts(rv.node);
+  renderReviewModal();
+}
+
+function renderRegressionSuggestions(suggestions) {
+  if (!suggestions || !suggestions.length) return "";
+  return `<div class="sect-title"><span>建議加進 evals/check_cases.yaml（人工確認 expected 後貼上）</span></div>
+    ${suggestions.map(s => `<pre class="prompt-preview">- id: ${s.id}
+  transcript: ${JSON.stringify(s.transcript)}
+  expected: {involves_exclusion: &lt;人工確認&gt;}  # 模型當時輸出：${JSON.stringify(s.model_output)}
+  split: regression</pre>`).join("")}`;
+}
+
+function renderCompareResult(result) {
+  const rows = result.baseline.map((b, i) => {
+    const c = result.candidate[i];
+    const changed = c.pass_rate > b.pass_rate ? "IMPROVED" : c.pass_rate < b.pass_rate ? "REGRESSED" : "-";
+    return { id: b.id, split: b.split, baseline: b.pass_rate, candidate: c.pass_rate, changed };
+  });
+  const mainTable = `
+    <div class="sect-title"><span>對照表</span></div>
+    <div style="overflow-x:auto"><table class="log">
+      <thead><tr><th>案例</th><th>split</th><th>目前</th><th>加上這條規則</th><th>變化</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td class="mono" data-hover-case="${r.id}">${r.id}</td>
+        <td>${r.split}</td>
+        <td class="num">${Math.round(r.baseline * 100)}%</td>
+        <td class="num">${Math.round(r.candidate * 100)}%</td>
+        <td>${r.changed === "IMPROVED" ? `<span class="pill" style="background:var(--ok-soft);color:var(--ok)">IMPROVED</span>`
+          : r.changed === "REGRESSED" ? `<span class="pill" style="background:var(--bad-soft);color:var(--bad)">REGRESSED</span>` : "-"}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>`;
+
+  const evi = result.evidence_baseline.length ? `
+    <div class="sect-title"><span>來源案例診斷（參考用，非正式判準——案例的預期答案沒有被驗證過）</span></div>
+    <div style="overflow-x:auto"><table class="log">
+      <thead><tr><th>案例</th><th>案例記錄</th><th>目前</th><th>加上這條規則</th><th>變了嗎</th></tr></thead>
+      <tbody>${result.evidence_baseline.map((b, i) => {
+        const c = result.evidence_candidate[i];
+        const bRuns = b.runs.map(r => r.involves_exclusion);
+        const cRuns = c.runs.map(r => r.involves_exclusion);
+        const changed = JSON.stringify(bRuns) !== JSON.stringify(cRuns);
+        return `<tr>
+          <td class="mono" data-hover-case="${b.id}">${b.id}</td>
+          <td>${b.expected_involves_exclusion}</td>
+          <td class="mono">${bRuns.join(", ")}</td>
+          <td class="mono">${cRuns.join(", ")}</td>
+          <td>${changed ? "yes" : "-"}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table></div>` : `<p class="hint">沒有可診斷的來源案例。</p>`;
+
+  return mainTable + evi;
+}
+
+// 評測 job 是分鐘級的（S1 §1.2）——分數回來之前先把「這次會測哪些案例」列
+// 出來，讓等待的人有東西可以看/講，不用面對一片空白直到 job 完成。
+function renderCasePreview(evidenceKeys) {
+  const standard = state.evalCases;
+  if (standard === undefined) { loadEvalCases(); return `<p class="hint">載入案例清單中…</p>`; }
+  const rows = [
+    ...(standard === "loading" ? [] : standard.map(c => ({ id: c.id, split: c.split }))),
+    ...evidenceKeys.map(id => ({ id, split: "evidence" })),
+  ];
+  if (!rows.length) return "";
+  return `
+    <div class="sect-title"><span>這次會測的案例</span></div>
+    <div style="overflow-x:auto"><table class="log">
+      <thead><tr><th>案例</th><th>split</th><th>狀態</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td class="mono" data-hover-case="${r.id}">${r.id}</td>
+        <td>${r.split}</td>
+        <td class="hint" style="margin:0">跑中…</td>
+      </tr>`).join("")}</tbody>
+    </table></div>`;
+}
+
+function renderCandidatePanel(rv, item) {
+  const p = ensurePanel(rv, item);
+  const running = p.job && p.job.status === "running";
+  const dirty = p.rule !== item.value.content.rule;
+  const showResult = !running && p.result && p.rule === p.evaluatedRule;
+  const evidence = item.value.evidence || [];
+
+  const repeatWarn = p.repeats === 1
+    ? `<p class="warn-chip">單次結果被驗證過不可信（同一個案例曾連對兩次、正確取樣後 6 次錯 5 次）——只拿來快速看方向，不能當核准依據。</p>` : "";
+
+  const controls = `
+    <div class="test-actions" style="flex-wrap:wrap">
+      <div class="field"><label>重複次數</label>
+        <select id="cand-repeats" ${running ? "disabled" : ""}>
+          ${[1, 3, 5].map(r => `<option value="${r}" ${p.repeats === r ? "selected" : ""}>×${r}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field"><label>模型</label>
+        <select id="cand-model" ${running ? "disabled" : ""}>
+          <option value="">（不覆蓋，用 production 設定）</option>
+          ${state.catalog.models.map(m => `<option value="${m}" ${p.model === m ? "selected" : ""}>${m}</option>`).join("")}
+        </select>
+      </div>
+      <button class="run-btn" id="cand-run" ${running ? "disabled" : ""}>${running ? "評測中…" : "▶ 跑評測對照"}${running ? `<span class="dot pulse"></span>` : ""}</button>
+      ${running ? `<span class="hint" style="margin:0">正在跑標準案例組 ＋ ${evidence.length} 個來源案例，每個 ×${p.repeats} 次…</span>` : ""}
+    </div>
+    ${repeatWarn}`;
+
+  const evidenceChips = evidence.length
+    ? `<div class="evi-chips">${evidence.map(e => `<span class="chip" data-hover-case="${e}">${e}</span>`).join("")}</div>`
+    : `<p class="hint">沒有來源案例。</p>`;
+
+  return `
+    <label class="tl">規則文字</label>
+    <textarea class="prompt-box" id="cand-rule" rows="3" ${running ? "disabled" : ""}>${p.rule}</textarea>
+    ${dirty ? `<button class="ghost-btn" id="cand-revert" type="button">還原蒸餾器原文</button>` : ""}
+    <p class="hint">${item.value.rationale || "（沒有 rationale）"}</p>
+    ${evidenceChips}
+    ${controls}
+    ${running ? renderCasePreview(evidence) : showResult ? renderCompareResult(p.result) : ""}
+    ${showResult ? `
+      <div class="test-actions">
+        <button class="run-btn" id="cand-approve">核准</button>
+        <button class="ghost-btn" id="cand-reject">退回</button>
+      </div>` : ""}
+  `;
+}
+
+function renderReviewProcedural(rv) {
+  const counts = state.pendingCounts[rv.node];
+  if (counts === undefined) { loadPendingCounts(rv.node, rv.scope); return `<p class="hint">載入中…</p>`; }
+  if (counts === "loading") return `<p class="hint">載入中…</p>`;
+  const items = counts.procedural;
+  const distilling = rv.distillJob && rv.distillJob.status === "running";
+
+  const left = `<div class="review-left">
+      <button class="run-btn" id="distill-btn" ${distilling ? "disabled" : ""}>${distilling ? "蒸餾中…" : "▶ 執行蒸餾"}${distilling ? `<span class="dot pulse"></span>` : ""}</button>
+      <div class="cand-list">${items.map(it => `
+        <div class="cand-row ${rv.selectedKey === it.key ? "sel" : ""}" data-ckey="${it.key}">${it.value.content.rule}</div>`).join("")
+        || `<p class="hint">目前沒有候選規則。</p>`}</div>
+    </div>`;
+
+  const selected = items.find(it => it.key === rv.selectedKey);
+  let right;
+  if (selected) {
+    right = renderCandidatePanel(rv, selected);
+  } else if (rv.approvedInfo) {
+    right = `<p class="hint">已核准 ${rv.approvedInfo.key}，現在生效中。</p>${renderRegressionSuggestions(rv.approvedInfo.suggestions)}`;
+  } else {
+    right = `<p class="hint">從左邊選一條候選規則。</p>`;
+  }
+
+  return `<div class="review-cols">${left}<div class="review-right">${right}</div></div>`;
+}
+
+function bindReviewProceduralEvents(rv) {
+  const modal = document.getElementById("review-modal");
+  const counts = state.pendingCounts[rv.node];
+  const items = counts && counts !== "loading" ? counts.procedural : [];
+
+  const distillBtn = modal.querySelector("#distill-btn");
+  if (distillBtn) distillBtn.addEventListener("click", () => runDistill(rv));
+
+  modal.querySelectorAll("[data-ckey]").forEach(row => row.addEventListener("click", () => {
+    rv.selectedKey = row.dataset.ckey;
+    rv.approvedInfo = null;
+    renderReviewModal();
+  }));
+
+  const selected = items.find(it => it.key === rv.selectedKey);
+  if (!selected) return;
+  const p = ensurePanel(rv, selected);
+
+  const ruleTa = modal.querySelector("#cand-rule");
+  if (ruleTa) {
+    ruleTa.addEventListener("input", () => { p.rule = ruleTa.value; });
+    ruleTa.addEventListener("blur", () => renderReviewModal());
+  }
+  const revertBtn = modal.querySelector("#cand-revert");
+  if (revertBtn) revertBtn.addEventListener("click", () => { p.rule = selected.value.content.rule; renderReviewModal(); });
+
+  const repeatsSel = modal.querySelector("#cand-repeats");
+  if (repeatsSel) repeatsSel.addEventListener("change", () => { p.repeats = +repeatsSel.value; renderReviewModal(); });
+  const modelSel = modal.querySelector("#cand-model");
+  if (modelSel) modelSel.addEventListener("change", () => { p.model = modelSel.value; });
+
+  const runBtn = modal.querySelector("#cand-run");
+  if (runBtn) runBtn.addEventListener("click", () => runEvaluate(rv, selected));
+  const approveBtn = modal.querySelector("#cand-approve");
+  if (approveBtn) approveBtn.addEventListener("click", () => approveCandidate(rv, selected));
+  const rejectBtn = modal.querySelector("#cand-reject");
+  if (rejectBtn) rejectBtn.addEventListener("click", () => rejectCandidate(rv, selected));
+}
+
+/* ---------- hover 逐字稿（§2.6）：position:fixed 跟游標走，不用表格內
+ * position:absolute——對照表容器是 overflow-x:auto，絕對定位的浮層會被裁掉。
+ * 案例內容兩個來源：評測回來的 result.cases（標準案例組 + 這條規則的來源
+ * 案例，見 demo/api.py::_run_evaluate() 的 enrichment）、以及這個 agent 的
+ * 情節記憶列表（rationale 底下的 evidence chips 在還沒跑評測時就要能 hover，
+ * 那時候還沒有 result）。---------- */
+
+function ensureCaseTooltip() {
+  let el = document.getElementById("case-tooltip");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "case-tooltip";
+    el.className = "case-tooltip";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function bindCaseHover(root, caseLookup) {
+  const tip = ensureCaseTooltip();
+  root.querySelectorAll("[data-hover-case]").forEach(el => {
+    const info = caseLookup[el.dataset.hoverCase];
+    if (!info) return;
+    el.setAttribute("tabindex", "0");
+    const position = e => {
+      const x = e.clientX ?? el.getBoundingClientRect().left;
+      const y = e.clientY ?? el.getBoundingClientRect().bottom;
+      tip.style.left = Math.min(x + 14, window.innerWidth - 336) + "px";
+      tip.style.top = Math.min(y + 14, window.innerHeight - 160) + "px";
+    };
+    const show = e => {
+      tip.innerHTML = `<div class="v"><b>${el.dataset.hoverCase}</b></div><div class="v">${info.transcript}</div><div class="v sub">預期：${JSON.stringify(info.expected)}</div>`;
+      tip.style.display = "block";
+      position(e);
+    };
+    const hide = () => { tip.style.display = "none"; };
+    el.addEventListener("mouseenter", show);
+    el.addEventListener("mousemove", position);
+    el.addEventListener("mouseleave", hide);
+    el.addEventListener("focus", show);
+    el.addEventListener("blur", hide);
+  });
+}
+
+function renderReviewModal() {
+  const modal = document.getElementById("review-modal");
+  const rv = state.review;
+  if (!rv) { modal.classList.remove("open"); modal.innerHTML = ""; return; }
+  const counts = state.pendingCounts[rv.node];
+  const epiCount = counts && counts !== "loading" ? counts.episodic.length : 0;
+  const procCount = counts && counts !== "loading" ? counts.procedural.length : 0;
+
+  const tabsHtml = `<div class="tabs">
+    <button class="tab ${rv.tab === "episodic" ? "on" : ""}" data-rtab="episodic">執行案例 <span class="count">${epiCount}</span></button>
+    <button class="tab ${rv.tab === "procedural" ? "on" : ""}" data-rtab="procedural">候選規則 <span class="count">${procCount}</span></button>
+  </div>`;
+  const body = rv.tab === "episodic" ? renderReviewEpisodic(rv) : renderReviewProcedural(rv);
+
+  modal.classList.add("open");
+  modal.innerHTML = `
+    <div class="insp-backdrop" id="review-backdrop"></div>
+    <div class="insp-modal" style="width:min(1200px,96vw);height:min(880px,92vh)">
+      <div class="insp-modal-head"><h2>記憶蒸餾器 · ${rv.node}</h2><button class="insp-close" id="review-close" title="關閉">×</button></div>
+      <div class="review-body">${tabsHtml}${body}</div>
+    </div>`;
+
+  modal.querySelector("#review-close").addEventListener("click", closeReviewModal);
+  modal.querySelector("#review-backdrop").addEventListener("click", closeReviewModal);
+  modal.querySelectorAll("[data-rtab]").forEach(b => b.addEventListener("click", () => { rv.tab = b.dataset.rtab; renderReviewModal(); }));
+
+  bindReviewEpisodicEvents(rv);
+  bindReviewProceduralEvents(rv);
+
+  const selected = rv.tab === "procedural" && counts && counts !== "loading" ? counts.procedural.find(it => it.key === rv.selectedKey) : null;
+  const panel = selected ? rv.panels[selected.key] : null;
+  const caseLookup = { ...(state.episodicByKey[rv.node] && state.episodicByKey[rv.node] !== "loading" ? state.episodicByKey[rv.node] : {}) };
+  Object.keys(caseLookup).forEach(k => { caseLookup[k] = { transcript: caseLookup[k].input, expected: caseLookup[k].output }; });
+  if (Array.isArray(state.evalCases)) {
+    state.evalCases.forEach(c => { caseLookup[c.id] = { transcript: c.transcript, expected: c.expected }; });
+  }
+  if (panel && panel.result) Object.assign(caseLookup, panel.result.cases);
+  bindCaseHover(modal, caseLookup);
+}
+
+function partPromptTest(n) {
+  return `
+    <div class="sect-title"><span>Prompt · System</span></div>
+    ${renderPromptBox(n, "promptSystem", "prompt-sys")}
+    <div class="sect-title"><span>Prompt · User</span></div>
+    ${renderPromptBox(n, "promptUser", "prompt-usr")}
+    <div class="sect-title"><span>單點測試</span></div>
+    ${tabTest(n)}`;
+}
+
+const MID_TABS = [["prompt", "Prompt ＆ 單點測試"], ["model", "模型"], ["tools", "工具"], ["memory", "長期記憶"]];
+
+function colMid(n) {
+  const active = state.midTab;
+  const tabsHtml = `<div class="tabs mid-tabs">${MID_TABS.map(([k, l]) =>
+    `<button class="tab ${active === k ? "on" : ""}" data-midtab="${k}">${l}</button>`).join("")}</div>`;
+  const body = active === "model" ? partModel(n)
+    : active === "tools" ? partTools(n)
+    : active === "memory" ? partMemory(n)
+    : partPromptTest(n);
+  return `<div class="insp-col-title">Agent 零件</div>${tabsHtml}<div class="mid-body">${body}</div>`;
+}
+
+function closeInspector() {
+  state.selected = null;
+  renderInspector();
+  renderNodes();
+}
+
+function renderInspector() {
+  if (!state.selected || !nodeById(state.selected)) {
+    inspector.classList.remove("open");
+    inspector.innerHTML = "";
+    return;
+  }
+  const n = nodeById(state.selected);
+  inspector.classList.add("open");
+  const st = computeStatusMap()[n.id] || "idle";
+  const label = { idle: "待執行", running: "執行中", done: "完成", bad: "需人工複核" }[st];
+  const dotColor = st === "running" ? "var(--run)" : st === "done" ? "var(--ok)" : st === "bad" ? "var(--bad)" : "var(--ink-3)";
+
+  inspector.innerHTML = `
+    <div class="insp-backdrop" id="insp-backdrop"></div>
+    <div class="insp-modal" role="dialog" aria-modal="true" aria-label="${n.id} 的 Agent 設定">
+      <div class="insp-modal-head">
+        <span class="dot" style="background:${dotColor}"></span>
+        <h2>${n.id}</h2><span class="chip">${label}</span>
+        <input class="desc-edit" id="desc-edit" value="${n.desc}" placeholder="這個 agent 在做什麼" title="僅本頁顯示用，不會保存">
+        <button class="insp-close" id="insp-close" title="關閉">×</button>
+      </div>
+      <div class="insp-cols">
+        <div class="insp-col">${colInput(n)}</div>
+        <div class="insp-col">${colMid(n)}</div>
+        <div class="insp-col">${colOutput(n)}</div>
+      </div>
+    </div>`;
+
+  const closeBtn = inspector.querySelector("#insp-close");
+  if (closeBtn) closeBtn.addEventListener("click", closeInspector);
+  const backdrop = inspector.querySelector("#insp-backdrop");
+  if (backdrop) backdrop.addEventListener("click", closeInspector);
+
+  const de = inspector.querySelector("#desc-edit");
+  de.addEventListener("input", () => { n.desc = de.value; renderNodes(); });
+
+  inspector.querySelectorAll("[data-midtab]").forEach(b =>
+    b.addEventListener("click", () => { state.midTab = b.dataset.midtab; renderInspector(); }));
+
+  const psys = inspector.querySelector("#prompt-sys");
+  if (psys) {
+    psys.addEventListener("input", () => { n.promptSystem = psys.value; psys.nextElementSibling.innerHTML = psys.value.replace(/\{\{\s*input\.(\w+)\s*\}\}/g, (_, k) => { const v = resolvedValueFor(n, k); return `<b>${v === undefined ? "（缺）" : shortVal(v)}</b>`; }); });
+    psys.addEventListener("blur", () => saveStep(n, { prompt: { system: n.promptSystem } }));
+  }
+  const pusr = inspector.querySelector("#prompt-usr");
+  if (pusr) {
+    pusr.addEventListener("input", () => { n.promptUser = pusr.value; pusr.nextElementSibling.innerHTML = pusr.value.replace(/\{\{\s*input\.(\w+)\s*\}\}/g, (_, k) => { const v = resolvedValueFor(n, k); return `<b>${v === undefined ? "（缺）" : shortVal(v)}</b>`; }); });
+    pusr.addEventListener("blur", () => saveStep(n, { prompt: { user: n.promptUser } }));
+  }
+
+  const modelSel = inspector.querySelector("#model-sel");
+  if (modelSel) modelSel.addEventListener("change", () => {
+    n.model = modelSel.value; renderNodes(); renderInspector();
+    saveStep(n, { model: n.model });
+  });
+
+  inspector.querySelectorAll("[data-tool]").forEach(cb => cb.addEventListener("change", () => {
+    const checked = Array.from(inspector.querySelectorAll("[data-tool]")).filter(c => c.checked).map(c => c.dataset.tool);
+    saveStep(n, { tools: checked });
+  }));
+
+  const sw = inspector.querySelector("#mem-switch");
+  if (sw) {
+    const flip = () => {
+      n.memory = !n.memory; renderNodes(); renderInspector();
+      saveStep(n, { memory_enabled: n.memory });
+      Object.keys(state.memCache).filter(k => k.startsWith(n.id + "|")).forEach(k => delete state.memCache[k]);
+    };
+    sw.addEventListener("click", flip);
+    sw.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); } });
+  }
+
+  inspector.querySelectorAll("[data-memtab]").forEach(b => b.addEventListener("click", () => {
+    state.memTab = b.dataset.memtab; state.memPath = "";
+    renderInspector();
+  }));
+  inspector.querySelectorAll("[data-mempath]").forEach(el => el.addEventListener("click", () => {
+    state.memPath = el.dataset.mempath;
+    renderInspector();
+  }));
+  const openReview = inspector.querySelector("#open-review");
+  if (openReview) openReview.addEventListener("click", () => openReviewModal(n));
+
+  if (state.currentWorkflowKind === "agent") {
+    const edit = ensureSchemaEdit(n);
+    const addIn = inspector.querySelector("#schema-add-input");
+    if (addIn) addIn.addEventListener("click", () => { edit.inputFields.push({ name: "", type: "string", required: true }); renderInspector(); });
+    const addOut = inspector.querySelector("#schema-add-output");
+    if (addOut) addOut.addEventListener("click", () => { edit.outputFields.push({ name: "", type: "string", from: "model" }); renderInspector(); });
+    inspector.querySelectorAll(".field-row").forEach(row => {
+      const list = row.dataset.kind === "input" ? edit.inputFields : edit.outputFields;
+      const idx = +row.dataset.idx;
+      row.querySelector(".fr-name").addEventListener("input", e => { list[idx].name = e.target.value; });
+      row.querySelector(".fr-name").addEventListener("blur", () => saveSchema(n));
+      row.querySelector(".fr-type").addEventListener("change", e => { list[idx].type = e.target.value; saveSchema(n); });
+      const req = row.querySelector(".fr-req");
+      if (req) req.addEventListener("change", e => { list[idx].required = e.target.checked; saveSchema(n); });
+      const from = row.querySelector(".fr-from");
+      if (from) from.addEventListener("change", e => { list[idx].from = e.target.value; saveSchema(n); });
+      row.querySelector(".fr-remove").addEventListener("click", () => { list.splice(idx, 1); saveSchema(n); });
+    });
+  }
+
+  const testVals = state.testInput[n.id] || testDefaults(n);
+  state.testInput[n.id] = testVals;
+  inspector.querySelectorAll("[data-tin]").forEach(el => {
+    const key = el.dataset.tin;
+    el.addEventListener(el.type === "checkbox" ? "change" : "input", () => {
+      testVals[key] = el.type === "checkbox" ? el.checked : el.value;
+      if (el.type === "checkbox") renderInspector();
+    });
+  });
+  const tr = inspector.querySelector("#test-run");
+  if (tr) tr.addEventListener("click", () => runNodeTest(n));
+  const tf = inspector.querySelector("#test-fill");
+  if (tf) tf.addEventListener("click", () => { state.testInput[n.id] = testDefaults(n); renderInspector(); });
+}
+
+/* ================= 主控台 ================= */
+
+function viewingBar() {
+  if (!state.viewId || state.viewId === state.liveThreadId) return "";
+  return `<div class="viewing-bar">正在看歷史執行 ${state.viewId}<button id="back-live">回到目前</button></div>`;
+}
+function bindBackLive(pane) {
+  const b = pane.querySelector("#back-live");
+  if (b) b.addEventListener("click", () => { state.viewId = state.liveThreadId; renderAll(); });
+}
+
+// JSON.stringify(..., null, 2) 縮排的是物件結構本身，字串值裡的換行還是
+// 逃脫成兩個字元的 "\n"，塞進 <pre>（white-space: pre-wrap）就是原樣印出
+// 那兩個字元，不會真的換行——像 prompt 這種多段落長字串會擠成一長串看不懂。
+// 換成真的換行字元讓 <pre> 照著斷行。
+function prettyJson(value) {
+  return JSON.stringify(value, null, 2).replace(/\\n/g, "\n");
+}
+
+function renderLog() {
+  const pane = document.getElementById("pane-log");
+  const snap = currentSnap();
+  const calls = snap ? snap.calls || [] : [];
+  document.getElementById("logcount").textContent = calls.length ? `(${calls.length})` : "";
+  if (!calls.length) {
+    pane.innerHTML = viewingBar() + `<div class="empty">還沒有執行紀錄。按上方「執行」開始，這裡會顯示真實的 call_log。</div>`;
+    bindBackLive(pane);
+    return;
+  }
+  const rows = calls.map((c, i) => {
+    const open = state.expanded.has(i);
+    const flags = [c.denied ? "DENIED" : null, c.is_error ? "ERROR" : null].filter(Boolean).join(" ");
+    return `<tr class="row" data-i="${i}">
+        <td>${fmtTime(c.created_at)}</td><td>${c.node || ""}</td>
+        <td><span class="kind ${c.kind}">${c.kind}</span></td>
+        <td>${c.name}</td><td class="num">${c.latency_ms}ms</td><td><span class="flag">${flags}</span></td>
+      </tr>
+      ${open ? `<tr class="detail"><td colspan="6">
+        <details><summary>request</summary><pre>${prettyJson(c.request)}</pre></details>
+        <details><summary>response</summary><pre>${prettyJson(c.response)}</pre></details>
+      </td></tr>` : ""}`;
+  }).join("");
+
+  pane.innerHTML = viewingBar() + `<table class="log">
+    <thead><tr><th>時間</th><th>node</th><th>kind</th><th>name</th><th class="num">latency</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  bindBackLive(pane);
+  pane.querySelectorAll("tr.row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const i = +tr.dataset.i;
+      state.expanded.has(i) ? state.expanded.delete(i) : state.expanded.add(i);
+      renderLog();
+    });
+  });
+}
+
+/** 「執行紀錄」跟「執行結果」原本是兩個分頁，內容其實都是同一份
+ * state.history——一份列 thread_id/workflow/狀態，另一份點開才看得到每步
+ * 產出。合併成一個：點一列展開/收合，看這次執行各步驟的真實輸出。 */
+function renderRuns() {
+  const pane = document.getElementById("pane-runs");
+  if (!state.history.length) {
+    pane.innerHTML = `<div class="empty">還沒有任何執行（這份清單只記這個分頁本次開啟後跑過的，重新整理會清空）。</div>`;
+    return;
+  }
+
+  pane.innerHTML = `<div class="rlist">${state.history.map(h => {
+    const open = state.openResults.has(h.threadId);
+    const snap = state.snapshots[h.threadId];
+    const status = snap ? snap.status : "running";
+    const steps = snap && snap.state_payload ? snap.state_payload._steps || {} : {};
+    const produced = nodes.filter(n => steps[n.id]);
+    const detail = !open ? "" : `<div class="rdetail">
+      ${produced.length ? produced.map(n => `
+        <div class="rcard">
+          <div class="rcard-head"><span class="n">${n.id}</span></div>
+          <div class="rcard-body">${renderFields(steps[n.id])}</div>
+        </div>`).join("") : `<div class="empty">這次執行還沒有任何產出。</div>`}
+    </div>`;
+    return `<div class="rrow ${state.viewId === h.threadId ? "sel" : ""}" data-tid="${h.threadId}">
+        <span class="caret">${open ? "▾" : "▸"}</span>
+        <span class="tid">${h.threadId}</span><span class="when">${h.when}</span>
+        <span class="when">${h.workflow} · ${h.audio}</span>
+        <span class="st-pill ${status}">${status}</span>
+      </div>${detail}`;
+  }).join("")}</div>`;
+
+  pane.querySelectorAll(".rrow").forEach(row => {
+    row.addEventListener("click", async () => {
+      const id = row.dataset.tid;
+      await viewRun(id);
+      state.openResults.has(id) ? state.openResults.delete(id) : state.openResults.add(id);
+      renderRuns();
+    });
+  });
+}
+
+function renderMeta() {
+  const el = document.getElementById("runmeta");
+  const runBtn = document.getElementById("run");
+  const ready = nodes.length > 0 && state.currentWorkflowKind === "workflow";
+  runBtn.disabled = state.running || !ready;
+  runBtn.title = ready ? "" : "先從上方 Workflow 選單載入一個 workflow 才能執行";
+  const snap = currentSnap();
+  if (!snap) { el.innerHTML = `<span>尚未執行</span>`; return; }
+  const label = state.running && state.viewId === state.liveThreadId ? "執行中" : snap.status || "—";
+  const timeoutNote = state.timedOut ? `<span style="color:var(--bad)">逾時——目前 agent runtime 綁定的可能不是這個 workflow</span>` : "";
+  el.innerHTML = `<span>thread_id <b>${state.viewId}</b></span><span><b>${label}</b></span>${timeoutNote}`;
+}
+
+function setTab(name) {
+  document.querySelectorAll(".tab[data-pane]").forEach(t => t.classList.toggle("on", t.dataset.pane === name));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + name));
+}
+
+// 只剩畫布／主控台之間的水平拉桿——Agent 設定變成置中彈窗之後，原本畫布跟
+// 它之間那條可拖拉的垂直分隔線（splitV／--insp-w）沒有對應的 DOM 了。
+function makeSplit(el) {
+  el.addEventListener("pointerdown", e => {
+    el.setPointerCapture(e.pointerId);
+    el.classList.add("dragging");
+    const move = ev => {
+      const r = document.getElementById("bodyGrid").getBoundingClientRect();
+      document.documentElement.style.setProperty("--console-h", Math.min(r.height - 160, Math.max(120, r.bottom - ev.clientY)) + "px");
+    };
+    const up = () => {
+      el.classList.remove("dragging");
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  });
+}
+makeSplit(document.getElementById("splitH"));
+
+function renderAll() {
+  renderNodes(); renderWires(); renderInspector(); renderCreateModal(); renderReviewModal();
+  renderLog(); renderRuns(); renderMeta();
+}
+
+/* ================= 開場：載入真實資料 ================= */
+
+function populateWorkflowSelect() {
+  const workflows = state.workflowList.filter(w => w.kind === "workflow");
+  const agents = state.workflowList.filter(w => w.kind === "agent");
+  const opt = w => `<option value="${w.name}">${w.name.replace(/^agent_/, "")}</option>`;
+  document.getElementById("wf").innerHTML =
+    `<option value="" selected>（空白畫布）</option>` +
+    (workflows.length ? `<optgroup label="Workflow">${workflows.map(opt).join("")}</optgroup>` : "") +
+    (agents.length ? `<optgroup label="Agent（單點測試）">${agents.map(opt).join("")}</optgroup>` : "");
+}
+// 哪個 workflow 該配哪批假音檔——README「假音檔」那欄跟
+// docs/exclusion-episodic-cases.md／exclusion-actor-distinction-demo.md
+// 兩份文件目前提到的音檔其實是同一組 gen_policy_01~04.wav。選錯 workflow
+// 配錯音檔（例如拿台積電場景的 gen_other 去跑除外責任判斷）不是這裡的 bug，
+// 是逐字稿內容跟 check 的 prompt 對不上——見這幾輪對話踩過的那次。
+const AUDIO_PREFIX_BY_WORKFLOW = {
+  stt_exclusion_notify: ["gen_policy_"],
+  stt_check_notify: ["gen_tsmc_", "gen_other_"],
+};
+
+function populateAudioSelect() {
+  const sel = document.getElementById("audio-sel");
+  const prefixes = AUDIO_PREFIX_BY_WORKFLOW[state.currentWorkflow];
+  const samples = prefixes ? state.samples.filter(a => prefixes.some(p => a.startsWith(p))) : state.samples;
+  sel.innerHTML = samples.map(a => `<option value="samples/${a}">${a}</option>`).join("");
+  if (samples.length) {
+    state.audio = "samples/" + samples[0];
+    sel.value = state.audio;
+  } else {
+    state.audio = "";
+  }
+}
+
+document.getElementById("run").addEventListener("click", startRun);
+document.getElementById("add-node").addEventListener("click", openCreateAgent);
+document.querySelectorAll(".tab[data-pane]").forEach(t => t.addEventListener("click", () => setTab(t.dataset.pane)));
+document.getElementById("wf").addEventListener("change", e => loadWorkflow(e.target.value));
+document.getElementById("audio-sel").addEventListener("change", e => { state.audio = e.target.value; });
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  if (state.creating) closeCreateAgent();
+  else if (state.review) closeReviewModal();
+  else if (state.selected) closeInspector();
+});
+
+async function init() {
+  try {
+    const [catalog, samples, workflows] = await Promise.all([
+      fetch(`${API}/catalog`).then(r => r.json()),
+      fetch(`${API}/samples`).then(r => r.json()),
+      fetch(`${API}/workflows`).then(r => r.json()),
+    ]);
+    state.catalog = catalog;
+    state.samples = samples;
+    state.workflowList = workflows; // workflow 跟 agent 都留著，下拉選單分兩組——agent 建立後要能再選回來看/編輯/測試，不然離開過一次就再也叫不出來
+  } catch (e) {
+    const el = document.getElementById("canvasEmpty");
+    el.innerHTML = `無法連線到 <span class="mono">${API}</span><br>請先啟動後端：<br><span class="mono">uv run uvicorn demo.api:app --port 8010</span>`;
+    el.style.display = "block";
+    return;
+  }
+  populateWorkflowSelect();
+  populateAudioSelect();
+  applyCam();
+  await loadWorkflow("");
+}
+init();
+</script>
+</body>
+</html>

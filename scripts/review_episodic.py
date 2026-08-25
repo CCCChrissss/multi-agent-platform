@@ -47,9 +47,12 @@ _POLICY_PATH = "mcp_servers/policy.yaml"
 _PRINCIPAL = "memory_writer"  # same principal orchestrator/memory_writer.py writes as -- already holds write on */episodic/* (mcp_servers/policy.yaml)
 
 
-async def _approve(
+async def approve(
     store: Any, memory_policy: Any, scope: tuple[str, ...], key: str, value: dict[str, Any], *, edited: bool = False
 ) -> None:
+    """Flips a pending episodic case to active -- shared by main()'s CLI loop
+    and demo/api.py's POST /memory/episodic/{key}/approve, same reasoning as
+    scripts/review_memory.py's approve()."""
     updated = {**value, "status": "active", "reviewed_by": _PRINCIPAL, "reviewed_at": datetime.now(UTC).isoformat()}
     if edited:
         updated["edited_by_reviewer"] = True
@@ -93,7 +96,7 @@ async def main(scope_arg: str, key: str | None = None) -> None:
                         print("[review] cancelled edit -- unchanged")
                     continue
                 if decision == "a":
-                    await _approve(store, memory_policy, scope, item.key, {**item.value, "content": content}, edited=edited)
+                    await approve(store, memory_policy, scope, item.key, {**item.value, "content": content}, edited=edited)
                 elif decision == "r":
                     print(f"[review] rejected {item.key!r} -- left pending (no delete, see module docstring)")
                 else:

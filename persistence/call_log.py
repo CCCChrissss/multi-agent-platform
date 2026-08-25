@@ -151,13 +151,23 @@ async def log_call(
     denied: bool = False,
     tool_call_id: str | None = None,
     response_model: str | None = None,
+    thread_id: str | None = None,
 ) -> None:
+    """`thread_id` overrides current_thread_id.get() when given -- the escape
+    hatch persistence/memory.py's recall()/browse() need
+    (docs/generic-agent-runtime-plan.md P7): when they run inside
+    mcp_servers/memory/server.py's stdio subprocess, current_thread_id was
+    never set there (that ContextVar is per-process, can't cross the stdio
+    boundary), so the caller passes the value explicitly instead. Every other
+    caller (gateway/client.py, mcp_servers/gateway.py's non-memory tool
+    calls) leaves this None and keeps reading the ContextVar exactly as
+    before."""
     try:
         async with await psycopg.AsyncConnection.connect(_database_url()) as conn:
             await conn.execute(
                 _INSERT,
                 (
-                    current_thread_id.get(),
+                    thread_id if thread_id is not None else current_thread_id.get(),
                     current_node_name.get(),
                     kind,
                     name,

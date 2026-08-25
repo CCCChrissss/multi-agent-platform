@@ -77,7 +77,7 @@ async def _ensure_memory():
 
 @mcp.tool()
 @guarded_tool(_log, "recall_semantic_memory")
-async def recall_semantic_memory(scope: list[str], query: str | None = None) -> str:
+async def recall_semantic_memory(scope: list[str], query: str | None = None, thread_id: str | None = None) -> str:
     """Recall semantic memory (facts about an entity) you don't already know.
 
     `scope` is a path under the memory namespace, e.g. ["recipient", "<id>"]
@@ -88,6 +88,12 @@ async def recall_semantic_memory(scope: list[str], query: str | None = None) -> 
     or if you aren't permitted to read it -- that's not an error, it just
     means no memory is available and you should fall back to your default
     behavior.
+
+    `thread_id`: not a real input -- MCPGateway.call_tool() injects this
+    itself for every memory__* call (docs/generic-agent-runtime-plan.md P7)
+    so call_log rows from this subprocess still correlate to a run; stripped
+    out of the schema list_openai_tools() hands the model, which should never
+    see or fill it in.
     """
     if not scope:
         raise ToolInputError("scope must be a non-empty list, e.g. [\"recipient\", \"<id>\"]")
@@ -100,6 +106,7 @@ async def recall_semantic_memory(scope: list[str], query: str | None = None) -> 
         scope=scope,
         query=query,
         limit=_RESULT_LIMIT + 1,
+        thread_id=thread_id,
     )
     truncated = len(items) > _RESULT_LIMIT
     items = items[:_RESULT_LIMIT]
@@ -121,7 +128,7 @@ async def recall_semantic_memory(scope: list[str], query: str | None = None) -> 
 
 @mcp.tool()
 @guarded_tool(_log, "browse_semantic_memory")
-async def browse_semantic_memory(scope: list[str] | None = None) -> str:
+async def browse_semantic_memory(scope: list[str] | None = None, thread_id: str | None = None) -> str:
     """Browse the semantic memory tree -- this is "ls", not "cat"
     (recall_semantic_memory is "cat": use it once you already know the exact
     scope you want). Use browse when you only know a rough direction -- for
@@ -148,6 +155,9 @@ async def browse_semantic_memory(scope: list[str] | None = None) -> str:
 
     Returns an empty result if you aren't permitted to read this scope --
     that's not an error, it means nothing is available here.
+
+    `thread_id`: see recall_semantic_memory's docstring -- same P7
+    auto-injected passthrough, not a real model-facing input.
     """
     store, memory_policy = await _ensure_memory()
     # GLOBAL_TENANT, not _TENANT ("default"): what browse() is for right now
@@ -156,7 +166,9 @@ async def browse_semantic_memory(scope: list[str] | None = None) -> str:
     # "not tenant-specific" category company aliases already live under
     # (persistence/memory.py's GLOBAL_TENANT docstring). Revisit if a future
     # tenant-scoped tree ever needs browsing too.
-    result = await browse(store, memory_policy, MemoryKind.SEMANTIC, tenant=GLOBAL_TENANT, prefix=scope or [])
+    result = await browse(
+        store, memory_policy, MemoryKind.SEMANTIC, tenant=GLOBAL_TENANT, prefix=scope or [], thread_id=thread_id
+    )
     _log(
         f"[memory-mcp] browse scope={scope!r} -> "
         f"{len(result.get('children', []))} children, {len(result.get('items', []))} items"

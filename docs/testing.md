@@ -1,6 +1,39 @@
 # 驗證
 
-沒有 pytest，全部是手動跑的 smoke test：
+沒有 pytest，全部是手動跑的 smoke test，分兩層：
+
+## 單一 MCP server（秒級回饋）
+
+新增/修改一個 MCP server 時最先該跑的一層——直接用 `mcp_servers/base_client.py` 的
+`MCPClient` 連上該 server 的 stdio 子行程，**不碰 LLM、不碰 agent、不碰 gateway**：
+
+```bash
+uv run python -m mcp_servers.stt.smoke_test
+uv run python -m mcp_servers.format_check.smoke_test
+uv run python -m mcp_servers.lookup.smoke_test
+uv run python -m mcp_servers.notified.smoke_test
+uv run python -m mcp_servers.calc.smoke_test
+uv run python -m mcp_servers.memory.smoke_test    # 唯一需要 Postgres 的一份，見下
+```
+
+每份至少驗三件事：(1) 工具清單與參數 schema 符合預期、(2) 正常輸入回正確結構、(3) 壞輸入
+回的是分類過的錯誤（`ToolInputError`/`ToolDependencyError`，見
+[../mcp_servers/tool_errors.py](../mcp_servers/tool_errors.py)）或工具自己設計的「明確的空」，
+不是 raw traceback。
+
+- `stt`/`format_check`/`lookup`/`notified` 四份完全獨立，不需要 `honcho start`——如果剛好有
+  跑（例如本機開發時），會多驗一條「依賴真的可達時回傳正確結構」的分支，但不依賴它。
+  `stt` 的真實轉錄需要呼叫 LiteLLM gateway，屬於秒級以上的模型推論，不適合這一層，所以用短
+  timeout 探測：gateway 沒起來就驗證乾淨的 `ToolDependencyError`，起了但還在推論就直接跳過
+  （不等它跑完）。四份合計應該在 10 秒內跑完，這也是它跟下面端到端 smoke test 分工的理由：
+  慢了就沒人會跑。已接進 CI（[../.github/workflows/ci.yml](../.github/workflows/ci.yml)）。
+- `memory` 需要 Postgres（server 一開就開真的長期記憶 store），CI 沒有 Postgres 所以沒接進去，
+  本機手動跑即可；不需要 Ollama/LiteLLM，因為呼叫時都不帶 `query`，不會走進 embedding
+  路徑。額外驗證 `MCP_CALLING_PRINCIPAL` 未設或設成無授權 principal 時 fail-closed（`recall`/
+  `browse` 回空，不是回資料）——判斷方式是查 `call_log` 的 `denied` 欄位，因為「被拒絕」和
+  「單純沒資料」從回傳內容本身看不出差別。
+
+## 端到端（分鐘級，燒真的 LLM）
 
 ```bash
 uv run python -m event_bus.smoke_test        # event bus 本身：pub/sub、當機重派、NOTIFY 延遲
@@ -12,7 +45,12 @@ uv run python -m workflows.parity_check      # 兩種模式對同一份輸入產
 - 後兩個需要 `honcho start` 已經在跑（它們會呼叫真的 LLM 與 agent service）。
 - 三個都會在 process 內自己起需要的 master/worker。
 - ⚠️ **跑之前要先關掉 `honcho -f Procfile.workers start`**——那批 process 的 consumer group 跟測試同名，會搶走測試的命令，讓用假 handler 的情境失效。
-- `gather_concurrency_smoke_test.py`（repo 根目錄）是唯一不需要任何 process 在跑的：純 mock，`uv run python gather_concurrency_smoke_test.py` 即可，也是目前唯一接進 CI（[../.github/workflows/ci.yml](../.github/workflows/ci.yml)）的測試。
+- `gather_concurrency_smoke_test.py`（repo 根目錄）是唯一不需要任何 process 在跑的：純 mock，`uv run python gather_concurrency_smoke_test.py` 即可，也接進了 CI（[../.github/workflows/ci.yml](../.github/workflows/ci.yml)）。
+
+寫一個新工具卻要跑完整條 agent 鏈路才知道對不對，回饋迴路太長，而且工具本身的問題（回傳結構
+錯、壞輸入漏 traceback）會被 LLM 的不確定性蓋掉——這是上面那層單一 MCP server smoke test存在
+的理由，兩層不是互相取代，而是分工：新工具先過第一層，再由端到端這層驗證它接進真實鏈路後行
+為不變。
 
 長期記憶本身的正確性（`recall()`/`browse()`/`remember()`、status gate、稽核日誌）：
 

@@ -19,44 +19,73 @@ rationale, summarized here:
    collected from tool *results*, never from what the model merely claims).
    A citation that doesn't check out gets one retry turn with the mismatch
    spelled out; still wrong -> AgentLoopIncomplete.
-3. MODEL_NAME is gemini-strong, not local-qwen -- this loop needs several
-   consecutive tool-calling turns plus mid-task direction changes
-   (backtracking to a sibling branch), which is a heavier ask than
-   llm/tsmc_judge.py's single-shot classification. Worth revisiting once
-   this scenario is stable, per the module's own reason for existing:
-   probing how much multi-hop tool use a small local model can sustain.
+3. This step's declared `model` (workflows/definitions/stt_exclusion_notify.yaml,
+   docs/generic-agent-runtime-plan.md P5) is claude-haiku as of 2026-08-17
+   (explicit user request to stop using Gemini entirely, gateway/config.yaml's
+   claude-haiku entry) -- this loop needs several consecutive tool-calling
+   turns plus mid-task direction changes (backtracking to a sibling branch),
+   which is a heavier ask than llm/tsmc_judge.py's single-shot
+   classification. Worth revisiting once this scenario is stable, per the
+   module's own reason for existing: probing how much multi-hop tool use a
+   small/cheap model can sustain.
 
-   Was gemini-cheap until 2026-08-11 (TODO.md's exclusion-judge-model-choice):
-   repeated sampling on evals/check_cases.yaml's drunk_driving_bike (the
-   deliberately-tricky multi-hop case) measured 0/5 on gemini-cheap vs
-   15/15 on gemini-strong, and gemini-cheap separately showed degraded
-   format/reasoning discipline the moment *any* episodic few-shot content
-   entered the prompt (TODO.md's exclusion-judge-episodic-degradation-risk)
-   -- switching to gemini-strong is the user-approved interim fix for both
-   findings at once, accepting gemini-strong's materially higher latency
-   as the cost. Still an open item: this is an accuracy-over-cost tradeoff
-   made under time pressure, not proof the two are the same root cause --
-   revisit for a cheaper model once one clears the same bar.
+   History: was gemini-cheap until 2026-08-11 (TODO.md's exclusion-judge-model-choice),
+   then gemini-strong -- repeated sampling on evals/check_cases.yaml's
+   drunk_driving_bike (the deliberately-tricky multi-hop case) measured 0/5
+   on gemini-cheap vs 15/15 on gemini-strong, and gemini-cheap separately
+   showed degraded format/reasoning discipline the moment *any* episodic
+   few-shot content entered the prompt (TODO.md's
+   exclusion-judge-episodic-degradation-risk). **The move to claude-haiku
+   hasn't been re-verified against that same evals/check_cases.yaml
+   comparison yet** -- run `evals/run_eval.py --repeats 3` before trusting
+   this model choice for this step; the gemini-strong-vs-gemini-cheap gap
+   above is evidence this judge is genuinely sensitive to model choice, not
+   a generic "any model works" task.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
-from harness.agent_loop import AgentLoopIncomplete, StallGuard, run_tool_calling_loop, wrap_agent_exception
+from harness.agent_loop import (
+    AgentLoopIncomplete,
+    StallGuard,
+    parse_structured_json,
+    run_tool_calling_loop,
+    wrap_agent_exception,
+)
 from mcp_servers.gateway import MCPGateway
+from orchestrator.workflow_def import resolve_model, resolve_prompt
 from persistence.memory_policy import MemoryPolicy
 from persistence.memory_prompt import inject_procedural, render_explored_map, track_browse_result
 
-MODEL_NAME = "gemini-strong"
 MAX_TURNS = 20
 _RETRY_MAX_TURNS = 5
 """Bound for the citation-conflict retry loop below -- smaller than
 MAX_TURNS since this is the model re-checking one already-explored
 citation, not exploring the tree from scratch."""
 _BROWSE_TOOL = "memory__browse_semantic_memory"
+
+# docs/generic-agent-runtime-plan.md P2's `from: model` declaration -- same
+# rationale as llm/tsmc_judge.py's _VERDICT_SCHEMA.
+_VERDICT_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "exclusion_verdict",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "involves_exclusion": {"type": "boolean"},
+                "matched_articles": {"type": "array", "items": {"type": "string"}},
+                "reason": {"type": "string"},
+            },
+            "required": ["involves_exclusion", "matched_articles", "reason"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+}
 
 # (workflow_name, step_name) scope for this step's procedural/episodic memory
 # (docs/long-term-memory-plan.md §3.2). Deliberately NOT the same
@@ -71,47 +100,6 @@ _BROWSE_TOOL = "memory__browse_semantic_memory"
 _MEMORY_SCOPE = ("stt_exclusion_notify", "check")
 _PROCEDURAL_LIMIT = 10
 
-# Hardcoded to this one product rather than a browsable "which product"
-# step -- this scenario only has one seeded product (data/insurance_product/
-# kgi_ltc.yaml, docs/exclusion-scenario-plan.md P3). Routing across multiple
-# products is a real future need but not this scenario's, so it's not built
-# ahead of a second product actually existing.
-_POLICY_ROOT_SCOPE = ["insurance_product", "kgi_ltc"]
-
-_SYSTEM_PROMPT = (
-    "你是保單除外責任判斷助手。你會收到一段客戶與業務討論保險權利的逐字稿，"
-    "判斷客戶描述的情況是否涉及本保單的「除外責任」"
-    "（保險公司依條款不負給付責任、或暫停豁免保險費的情況）。\n\n"
-    "你不知道這份保單條款實際寫什麼，也不可以用你自己對保險的一般常識回答——"
-    "你必須透過 browse_semantic_memory 這個工具實際查閱條款內容，再根據查到的條文做判斷。\n\n"
-    f"用法：\n"
-    f'- 從 scope={json.dumps(_POLICY_ROOT_SCOPE, ensure_ascii=False)} 開始查（這是本次要判斷的保單）。\n'
-    "- 每次呼叫會回傳這一層底下有哪些分支（children，各附一句話說明）跟這一層本身的條文內容"
-    "（items，如果這層是葉節點的話）。\n"
-    "- 看到想深入的分支，把它的 segment 名字加進 scope 陣列裡再呼叫一次，往下鑽。\n"
-    "- 如果鑽進去的分支沒有你要的答案，不要用猜的——用回傳值裡的 parent 退回上一層，"
-    "看 siblings 裡還有哪些分支沒探索過，換一個方向繼續找。\n\n"
-    "下結論前，以下兩件事都要查證過，不能只查其中一項就下結論：\n"
-    "1. 有沒有除外條款的原因跟客戶描述的情況對得上？\n"
-    "2. 那條除外條款排除的是哪一項保險金給付？那項給付本身的門檻（例如失能要達到第幾級、"
-    "是不是符合長期照顧狀態的定義），客戶描述的情況實際上有沒有達到？"
-    "如果連給付本身的門檻都沒達到，這項給付本來就不會理賠，跟除外條款無關——這種情況不算「涉及"
-    "除外責任」，是給付條件本身沒成立。要查清楚失能等級，通常要另外去查失能程度表（附表），"
-    "不會只看除外責任那個分支就有答案。\n"
-    "第 1、2 點通常記在不同分支底下，只查完第 1 點就下結論是不夠的。\n"
-    "如果你查到了具體的失能等級（例如「第六級」），reason 裡要直接寫出那個等級，並明確跟除外"
-    "條款排除的門檻（例如「第二至三級」）做比較、講出結論——不要說「建議客戶再確認」或「若符合"
-    "…則…」這種保留字句，你已經查到的資料就是答案，不需要保留、不需要交給客戶或專科醫師再確認。\n\n"
-    "- 只有你透過這個工具實際讀到全文的條文，才可以在最終答案裡引用；沒讀過的條文，"
-    "即使你覺得應該相關，也不可以引用。\n\n"
-    "查完之後，直接用純文字回答，格式固定為：\n"
-    '{"involves_exclusion": true 或 false, "matched_articles": ["第XX條", ...], "reason": "..."}\n'
-    "- matched_articles 只能放你已經透過工具讀到全文的條號/附表名稱"
-    "（跟工具回傳的 \"article\" 欄位完全一致的字串），沒有相關條文就給空陣列。\n"
-    "- reason 用一兩句話說明判斷依據，特別是如果查到的除外條款跟客戶的失能情況不完全對應"
-    "（例如除外條款只適用某幾種給付，不是全部給付），要在 reason 裡講清楚。\n"
-    "- 不要有格式以外的文字。"
-)
 
 def _citation_conflict_prompt(unverified: list[str]) -> str:
     # An f-string only for the first line (the one interpolated part);
@@ -142,48 +130,18 @@ def _seen_articles(explored: dict[tuple[str, ...], dict]) -> set[str]:
 
 
 def _parse_verdict(content: str) -> dict:
-    # The system prompt asks for JSON only, but gemini-cheap occasionally
-    # prefaces it with explanatory prose anyway (observed for genuinely
-    # informational questions, where the model wants to be helpful beyond
-    # the terse verdict format) -- parsing the whole string as JSON then
-    # breaks even though a valid JSON object is right there in it. Don't
-    # rely on the model perfectly obeying a formatting instruction: decode
-    # starting from the first `{` rather than slicing to the last one --
-    # `reason` is free-text and may itself contain a literal `{`, which
-    # would make a last-brace slice cut the object in the wrong place;
-    # raw_decode finds the matching close brace properly instead.
-    data, _ = json.JSONDecoder().raw_decode(content, content.index("{"))
+    # _VERDICT_SCHEMA (passed as response_format on every run_tool_calling_loop
+    # call below) guarantees `content` is this JSON object, but not always
+    # bare -- parse_structured_json() strips an occasional markdown fence
+    # around it (harness.agent_loop.parse_structured_json's docstring: seen
+    # under concurrent load even with strict:True). The str()/bool()
+    # coercions stay as cheap insurance against a provider not perfectly
+    # honoring `strict` in other ways.
+    data = parse_structured_json(content)
     return {
         "involves_exclusion": bool(data["involves_exclusion"]),
         "matched_articles": [str(a) for a in (data.get("matched_articles") or [])],
         "reason": str(data.get("reason") or ""),
-    }
-
-
-def _build_result(transcript: str, verdict: dict) -> dict:
-    """should_notify/subject/body are derived here, deterministically, not
-    asked of the model -- docs/exclusion-scenario-plan.md §3.5/P0's
-    should_notify/subject/body contract is the scenario step's
-    responsibility to fill in, and the judgment fields above (involves_
-    exclusion/matched_articles/reason) are already the model's whole job;
-    letting code assemble the rest keeps that job narrow and the output
-    deterministic instead of trusting the model to also format a subject
-    line correctly."""
-    involves = verdict["involves_exclusion"]
-    matched = verdict["matched_articles"]
-    reason = verdict["reason"]
-    return {
-        "involves_exclusion": involves,
-        "matched_articles": matched,
-        "reason": reason,
-        "should_notify": involves,
-        "subject": "客戶對話涉及保單除外責任，需要人工覆核" if involves else "",
-        "body": (
-            f"逐字稿：\n{transcript}\n\n"
-            f"判斷：{'涉及除外責任' if involves else '不涉及除外責任'}\n"
-            f"引用條文：{'、'.join(matched) if matched else '無'}\n"
-            f"理由：{reason}"
-        ),
     }
 
 
@@ -192,12 +150,27 @@ async def judge_exclusion(
     gateway: MCPGateway,
     transcript: str,
     *,
+    model: str | None = None,
+    system_prompt: str | None = None,
+    user_prompt: str | None = None,
     store: Any | None = None,
     memory_policy: MemoryPolicy | None = None,
     tenant: str = "default",
 ) -> dict:
-    system_prompt, all_tools = await asyncio.gather(
-        inject_procedural(store, memory_policy, tenant=tenant, scope=_MEMORY_SCOPE, base_prompt=_SYSTEM_PROMPT, limit=_PROCEDURAL_LIMIT),
+    # system_prompt/user_prompt/model come from the caller's workflow spec
+    # (agents/runtime.py renders workflows/definitions/stt_exclusion_notify.yaml's
+    # `check` step prompt/model via orchestrator.workflow_def.render_prompt()/
+    # resolve_model()). Callers with no spec in hand (evals/run_eval.py's own
+    # --model override, llm/exclusion_judge_smoke_test.py) fall back to
+    # _MEMORY_SCOPE's own workflow's declared prompt/model, so every path
+    # runs under the same content (docs/generic-agent-runtime-plan.md P1/P5).
+    system_prompt, user_prompt = resolve_prompt(
+        *_MEMORY_SCOPE, {"transcript": transcript}, system_prompt=system_prompt, user_prompt=user_prompt
+    )
+    model = resolve_model(*_MEMORY_SCOPE, model=model)
+
+    rendered_system_prompt, all_tools = await asyncio.gather(
+        inject_procedural(store, memory_policy, tenant=tenant, scope=_MEMORY_SCOPE, base_prompt=system_prompt, limit=_PROCEDURAL_LIMIT),
         gateway.list_openai_tools(),
     )
     # Only offer the browse tool -- `check` also has lookup__* (TSMC
@@ -207,8 +180,8 @@ async def judge_exclusion(
     # deterministic backstop already covers it.
     tools = [t for t in all_tools if t["function"]["name"] == _BROWSE_TOOL]
     messages: list[dict] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": transcript},
+        {"role": "system", "content": rendered_system_prompt},
+        {"role": "user", "content": user_prompt},
     ]
 
     explored: dict[tuple[str, ...], dict] = {}
@@ -231,7 +204,7 @@ async def judge_exclusion(
             messages.append({"role": "user", "content": map_text})
 
     assistant_message = await run_tool_calling_loop(
-        MODEL_NAME,
+        model,
         messages,
         tools,
         gateway,
@@ -240,6 +213,7 @@ async def judge_exclusion(
         stall_guard=stall_guard,
         on_tool_result=_on_tool_result,
         on_turn_end=_on_turn_end,
+        response_format=_VERDICT_SCHEMA,
     )
     verdict = _parse_verdict(assistant_message.content)
 
@@ -252,7 +226,7 @@ async def judge_exclusion(
         # tool call must actually run and update `explored`, or this retry
         # can never succeed.
         retry_message = await run_tool_calling_loop(
-            MODEL_NAME,
+            model,
             messages,
             tools,
             gateway,
@@ -260,6 +234,7 @@ async def judge_exclusion(
             max_turns=_RETRY_MAX_TURNS,
             on_tool_result=_on_tool_result,
             on_turn_end=_on_turn_end,
+            response_format=_VERDICT_SCHEMA,
         )
         verdict = _parse_verdict(retry_message.content)
         unverified = [a for a in verdict["matched_articles"] if a not in _seen_articles(explored)]
@@ -272,4 +247,4 @@ async def judge_exclusion(
                 ),
             )
 
-    return _build_result(transcript, verdict)
+    return verdict

@@ -84,7 +84,10 @@ def _render_rules(items: list[SearchItem]) -> str:
     return "\n".join(lines)
 
 
-async def main(scope_arg: str, limit: int) -> None:
+async def main(scope_arg: str, limit: int) -> list[str]:
+    """Returns the keys actually written (empty if nothing to distill or the
+    model proposed nothing) -- demo/api.py's POST /memory/distill job result
+    for the UI; `print()` stays for the CLI path, unchanged."""
     scope = parse_scope(scope_arg)
 
     current_thread_id.set(f"distill-{uuid.uuid4()}")
@@ -102,7 +105,7 @@ async def main(scope_arg: str, limit: int) -> None:
 
         if not episodic:
             print(f"[distill] no episodic memories under default/episodic/{'/'.join(scope)} -- nothing to distill")
-            return
+            return []
 
         user_content = f"{_render_cases(episodic)}\n\n{_render_rules(procedural)}"
         response = chat_json(_MODEL, _SYSTEM_PROMPT, user_content)
@@ -110,7 +113,7 @@ async def main(scope_arg: str, limit: int) -> None:
 
         if not candidates:
             print(f"[distill] model proposed no new candidates for default/procedural/{'/'.join(scope)}")
-            return
+            return []
 
         # A candidate's evidence must point at cases the model actually saw
         # -- same "don't trust the model's own claim" posture llm/
@@ -119,7 +122,7 @@ async def main(scope_arg: str, limit: int) -> None:
         # are dropped, not the whole candidate -- a partially-grounded
         # candidate still has something real for a human to review.
         valid_keys = {item.key for item in episodic}
-        written = 0
+        written_keys = []
         for candidate in candidates:
             rule = candidate.get("rule")
             evidence = [e for e in (candidate.get("evidence") or []) if e in valid_keys]
@@ -133,10 +136,11 @@ async def main(scope_arg: str, limit: int) -> None:
                 key=key, content={"rule": rule}, status="pending",
                 extra={"evidence": evidence, "rationale": rationale},
             )
-            written += 1
+            written_keys.append(key)
             print(f"[distill] wrote pending candidate {key}: {rule!r} (evidence={evidence})")
 
-        print(f"[distill] wrote {written} pending candidate(s) under default/procedural/{'/'.join(scope)}")
+        print(f"[distill] wrote {len(written_keys)} pending candidate(s) under default/procedural/{'/'.join(scope)}")
+        return written_keys
 
 
 if __name__ == "__main__":

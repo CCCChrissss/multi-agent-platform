@@ -1,4 +1,4 @@
-"""Thin HTTP client for agents/notified/server.py
+"""Thin HTTP client for agents/runtime.py's /notified/run route
 (docs/agent-api-contract.md). See agents/stt/client.py for the
 envelope-translation rationale.
 """
@@ -8,14 +8,14 @@ from __future__ import annotations
 from agents.envelope import run_request
 from harness.agent_loop import AgentLoopIncomplete
 
-BASE_URL = "http://localhost:8005"
+BASE_URL = "http://localhost:8003/notified"
 
 
 async def decide_and_notify(should_notify: bool, subject: str, body: str, context: dict | None = None) -> list[str]:
     envelope = await run_request(
         BASE_URL,
         "notified",
-        "agents.notified.server:app --port 8005",
+        "agents.runtime:app --port 8003",
         {"should_notify": should_notify, "subject": subject, "body": body},
         context,
     )

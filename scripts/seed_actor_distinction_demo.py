@@ -5,7 +5,7 @@ way scripts/seed_exclusion_episodic_examples.py's corpus is.
 
 Calls the real judge_exclusion() with gemini-cheap (docs/exclusion-actor-
 distinction-demo.md §3 already found production's gemini-strong has a
-ceiling effect that makes this blind spot invisible -- MODEL_NAME override,
+ceiling effect that makes this blind spot invisible -- model= override,
 same technique as scripts/review_memory.py's --model) against
 `tenant="default"`, where the only active procedural rule
 (`pending-e9b8205f`, the "不同給付項目" cross-article distinction) doesn't
@@ -33,7 +33,7 @@ import asyncio
 import json
 import uuid
 
-import llm.exclusion_judge as exclusion_judge_module
+from llm.exclusion_judge import judge_exclusion
 from mcp_servers.gateway import MCPGateway
 from mcp_servers.policy import load_policy
 from persistence.call_log import current_node_name, current_thread_id
@@ -59,8 +59,7 @@ _CASES = [
 
 
 async def main() -> None:
-    print(f"[seed] overriding MODEL_NAME: {exclusion_judge_module.MODEL_NAME!r} -> {_MODEL!r} (this run only)")
-    exclusion_judge_module.MODEL_NAME = _MODEL
+    print(f"[seed] overriding model: -> {_MODEL!r} (this run only)")
 
     gateway_policy = load_policy(_POLICY_PATH)
     async with (
@@ -70,8 +69,8 @@ async def main() -> None:
         for key, transcript in _CASES:
             current_thread_id.set(f"seed-actor-distinction-{uuid.uuid4()}")
             current_node_name.set("check")  # the real principal judge_exclusion() runs as
-            verdict = await exclusion_judge_module.judge_exclusion(
-                gateway, transcript, store=store, memory_policy=memory_policy, tenant="default"
+            verdict = await judge_exclusion(
+                gateway, transcript, store=store, memory_policy=memory_policy, tenant="default", model=_MODEL
             )
             output = json.dumps(
                 {k: verdict[k] for k in ("involves_exclusion", "matched_articles", "reason")}, ensure_ascii=False

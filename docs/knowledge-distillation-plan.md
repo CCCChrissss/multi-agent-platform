@@ -373,6 +373,7 @@ approve 時如果這個候選被編輯過，存進 `default` tenant 的值會多
 - **不做** semantic 的自動蒸餾。本文只處理 episodic → procedural；semantic 是「判斷某個屬性算不算值得記的事實」，是另一個形狀的問題（[TODO.md](../TODO.md#memory-writer-llm-judgment)）。
 - **不做** 寫入端的 episodic 篩選。那是另一個獨立問題（[TODO.md](../TODO.md#memory-writer-write-filter)）——關卡管「寫進去之後能不能被讀到」，篩選管「要不要一開始就寫」，兩者可以各自獨立決定要不要做。
 - **不做** UI。CLI 夠用到證明這條鏈有價值為止。
+  - 2026-08-18 更新：這個前提已達成（P0–P5 每一段都個別驗證過），UI 由 [docs/distill-ui-plan.md](distill-ui-plan.md) 接手（[issue #28](https://github.com/donydony228/agent-architecture/issues/28)）。那份文件不改動本文件的任何記憶語意，只把 CLI 的三件事搬進 demo 前端。
 
 ---
 

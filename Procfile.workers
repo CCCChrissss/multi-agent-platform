@@ -10,7 +10,7 @@
 #      worker_crash_recovery 的 failing_stt_handler）就會被真 handler 接走，
 #      測試結果變得不可信。跑 smoke test 前務必先關掉這個 Procfile。
 #
-# 啟動（Procfile 那批常駐服務要先起來，worker 會打 agent 的 8003~8005）：
+# 啟動（Procfile 那批常駐服務要先起來，worker 會打 agent runtime 的 8003）：
 #   uv run honcho -f Procfile.workers start
 #
 # step 名單是示範場景 stt_check_notify 的，跟

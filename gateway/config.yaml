@@ -3,6 +3,18 @@ model_list:
     litellm_params:
       model: ollama_chat/qwen2.5:3b
       api_base: http://localhost:11434
+  # 2026-08-17: promoted to the platform default for every agent that used
+  # to declare gemini-cheap/gemini-strong (see workflows/definitions/*.yaml's
+  # `model:` fields) -- explicit user request to stop using Gemini. Only
+  # `check`'s TSMC branch (stt_check_notify.yaml) still uses local-qwen,
+  # unaffected by this change. exclusion_judge's check branch moved off
+  # gemini-strong too, despite the eval-backed rationale below its own
+  # MODEL_NAME comment for why gemini-strong was chosen -- that comparison
+  # hasn't been rerun against this model yet, see TODO.md.
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
   - model_name: gemini-cheap
     litellm_params:
       model: gemini/gemini-3.1-flash-lite
@@ -39,5 +51,6 @@ model_list:
       drop_params: true
 
 litellm_settings:
-  # if a call to local-qwen fails (e.g. Ollama is down), retry against gemini-cheap
-  fallbacks: [{"local-qwen": ["gemini-cheap"]}]
+  # if a call to local-qwen fails (e.g. Ollama is down), retry against claude-haiku
+  # (was gemini-cheap -- see the claude-haiku model_list entry's comment)
+  fallbacks: [{"local-qwen": ["claude-haiku"]}]

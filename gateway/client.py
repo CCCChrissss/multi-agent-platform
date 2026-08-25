@@ -85,8 +85,15 @@ def transcribe(model: str, audio_path: str) -> str:
     return result
 
 
-def chat_with_tools(model: str, messages: list[dict], tools: list[dict]):
-    """Takes/returns a raw messages list so callers can run a multi-turn tool-calling loop."""
+def chat_with_tools(model: str, messages: list[dict], tools: list[dict], response_format: dict | None = None):
+    """Takes/returns a raw messages list so callers can run a multi-turn tool-calling loop.
+
+    `response_format` (docs/generic-agent-runtime-plan.md P2's `from: model`)
+    is a LiteLLM/OpenAI `{"type": "json_schema", "json_schema": {...}}` dict,
+    forwarded as-is. Verified against gateway/config.yaml's three models
+    (scripts/check_structured_output_support.py) to coexist with `tools` in
+    the same call -- the model still calls a tool when it wants to; the
+    schema only constrains the turn where it replies with no tool call."""
     """Expects response: {
         "choices": [
             {
@@ -102,14 +109,12 @@ def chat_with_tools(model: str, messages: list[dict], tools: list[dict]):
                                 "arguments": {...}
                             }
                         }"""
+    kwargs: dict = {"model": model, "messages": messages, "tools": tools, "tool_choice": "auto"}
+    if response_format is not None:
+        kwargs["response_format"] = response_format
     start = time.monotonic()
     try:
-        response = _client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-        )
+        response = _client.chat.completions.create(**kwargs)
     except Exception as exc:
         log_call_sync(
             "llm", model, {"messages": messages}, {"error": str(exc)}, True, int((time.monotonic() - start) * 1000)

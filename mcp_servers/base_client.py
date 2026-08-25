@@ -1,4 +1,8 @@
-"""Generic persistent stdio MCP client, shared by every mcp_servers/*/client.py.
+"""Generic persistent stdio MCP client — the only client implementation.
+
+All MCP tool calls go through MCPGateway, which uses this class directly;
+per-server client.py files are not part of the pattern for adding a new
+MCP server (see mcp_servers/*/server.py + policy.yaml instead).
 
 Connects once (`connect()` / async context manager) and reuses the same
 session for every call, matching how real MCP hosts keep one long-lived

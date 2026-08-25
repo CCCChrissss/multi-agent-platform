@@ -14,3 +14,21 @@ jobs:
           python-version: "3.11"
       - run: uv sync
       - run: uv run python gather_concurrency_smoke_test.py
+
+  mcp-server-smoke-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.11"
+      - run: uv sync
+      # One smoke test per MCP server, straight over stdio (no LLM, no
+      # gateway, no other service) -- see docs/testing.md. mcp_servers/memory
+      # needs Postgres, which this runner doesn't have, so it's excluded
+      # here; run it locally instead (`uv run python -m mcp_servers.memory.smoke_test`).
+      - run: uv run python -m mcp_servers.stt.smoke_test
+      - run: uv run python -m mcp_servers.format_check.smoke_test
+      - run: uv run python -m mcp_servers.lookup.smoke_test
+      - run: uv run python -m mcp_servers.notified.smoke_test
+      - run: uv run python -m mcp_servers.calc.smoke_test

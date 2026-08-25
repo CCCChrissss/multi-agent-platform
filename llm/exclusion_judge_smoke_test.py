@@ -69,7 +69,8 @@ async def scenario_citation_retry_recovers_via_rebrowse() -> None:
         _message(content='{"involves_exclusion": true, "matched_articles": ["第二條"], "reason": "confirmed"}'),
     ]
 
-    def fake_chat_with_tools(model, messages, tools):
+    def fake_chat_with_tools(model, messages, tools, response_format=None):
+        assert response_format == m._VERDICT_SCHEMA, response_format
         return responses.pop(0)
 
     with (
@@ -85,18 +86,39 @@ async def scenario_citation_retry_recovers_via_rebrowse() -> None:
 
 
 async def scenario_parse_verdict_handles_brace_in_reason() -> None:
+    """docs/generic-agent-runtime-plan.md P2: _VERDICT_SCHEMA (passed as
+    response_format) guarantees no prose prefix/suffix any more -- this
+    scenario now only needs to check that a literal `{` inside the
+    free-text `reason` value (still legal JSON) parses fine under the
+    simplified plain json.loads()."""
     import llm.exclusion_judge as m
 
-    content = '前情提要文字\n{"involves_exclusion": false, "matched_articles": [], "reason": "門檻是 {第二至三級}，未達成"}'
+    content = '{"involves_exclusion": false, "matched_articles": [], "reason": "門檻是 {第二至三級}，未達成"}'
     verdict = m._parse_verdict(content)
     assert verdict["involves_exclusion"] is False, verdict
     assert verdict["reason"] == "門檻是 {第二至三級}，未達成", verdict
-    print("[parse_verdict_brace_in_reason] OK -- a literal `{` inside `reason` no longer breaks parsing")
+    print("[parse_verdict_brace_in_reason] OK -- a literal `{` inside `reason` still parses fine")
+
+
+async def scenario_parse_verdict_handles_markdown_fence() -> None:
+    """_parse_verdict() must tolerate a ```json fence around otherwise valid
+    content -- harness.agent_loop.parse_structured_json()'s docstring has
+    the full story (surfaced under concurrent load, but confounded by a
+    since-fixed gateway/client.py bug; kept as a cheap defensive strip
+    regardless of root cause)."""
+    import llm.exclusion_judge as m
+
+    content = '```json\n{"involves_exclusion": false, "matched_articles": ["第二十九條"], "reason": "門檻未達成"}\n```'
+    verdict = m._parse_verdict(content)
+    assert verdict["involves_exclusion"] is False, verdict
+    assert verdict["matched_articles"] == ["第二十九條"], verdict
+    print("[parse_verdict_markdown_fence] OK -- a ```json fence around otherwise-valid content no longer breaks parsing")
 
 
 async def main() -> None:
     await scenario_citation_retry_recovers_via_rebrowse()
     await scenario_parse_verdict_handles_brace_in_reason()
+    await scenario_parse_verdict_handles_markdown_fence()
     print("\nAll exclusion_judge smoke tests passed.")
 
 

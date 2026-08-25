@@ -76,6 +76,7 @@ async def run_tool_calling_loop(
     on_tool_result: Callable[[Any, dict, str, bool], None] | None = None,
     on_turn_end: Callable[[], None] | None = None,
     raise_on_max_turns: bool = True,
+    response_format: dict | None = None,
 ) -> Any | None:
     """The mechanical shell every llm/*.py tool-calling loop repeated
     verbatim: call the model, stop once it replies with no tool calls,
@@ -93,10 +94,17 @@ async def run_tool_calling_loop(
     Returns the model's final no-tool-call message, or `None` if
     `raise_on_max_turns=False` and the turn budget ran out first (the
     caller decides what "gave up" means for it); otherwise raises
-    AgentLoopIncomplete on stall or max-turns exhaustion."""
+    AgentLoopIncomplete on stall or max-turns exhaustion.
+
+    `response_format` (docs/generic-agent-runtime-plan.md P2's `from: model`)
+    is forwarded to every turn's chat_with_tools() call, tool-calling turns
+    included -- verified (scripts/check_structured_output_support.py) that a
+    model still calls a tool when it wants to even with a response_format
+    set; the schema only constrains the turn where it replies with no tool
+    call, which is the only turn whose content a caller ever parses."""
     guard = stall_guard or StallGuard(consecutive_limit=2)
     for _ in range(max_turns):
-        response = chat_with_tools(model, messages, tools)
+        response = chat_with_tools(model, messages, tools, response_format=response_format)
         assistant_message = response.choices[0].message
         # we only ever register type="function" tools, so ignore any other tool-call kind
         tool_calls = [c for c in (assistant_message.tool_calls or []) if c.type == "function"]
@@ -142,6 +150,59 @@ async def run_tool_calling_loop(
     if raise_on_max_turns:
         raise AgentLoopIncomplete(node=node, reason=f"{node}: reached max tool-calling turns without a final answer")
     return None
+
+
+def parse_structured_json(content: str) -> Any:
+    """json.loads() for a `response_format=json_schema` reply
+    (docs/generic-agent-runtime-plan.md P2's `from: model`), tolerant of a
+    ```/```json markdown fence around otherwise schema-conforming content.
+
+    Written after hitting exactly this under concurrent load against
+    gemini-strong (six concurrent llm/exclusion_judge.py::judge_exclusion()
+    calls) -- though that run turned out to be while gateway/client.py's
+    chat_with_tools() had a since-fixed bug silently dropping
+    response_format entirely, so it isn't confirmed evidence this still
+    happens under genuine schema enforcement. Kept anyway: a stray fence
+    around otherwise-valid JSON is cheap to tolerate regardless of cause,
+    and a bare json.loads() raises the exact same JSONDecodeError on it as
+    on truly malformed content, for turns that were otherwise perfectly
+    parseable.
+
+    2026-08-17: claude-haiku (docs/generic-agent-runtime-plan.md's Gemini ->
+    Anthropic model swap) confirmed a second failure shape a fence-strip
+    alone doesn't cover -- scripts/check_structured_output_support.py's
+    tools=yes case came back as free-text reasoning *followed by* the JSON
+    object (`"我理解您提供的信息是...\n\n{\"mentions_tsmc\": true}"`), not
+    wrapped in a fence at all. Anthropic has no native equivalent of OpenAI's
+    json_schema response_format, so `strict: True` evidently isn't a hard
+    constraint on the whole reply the way it is for Gemini/local-qwen (which
+    reliably returned bare JSON in the same check). Falls back to
+    `raw_decode()` from the first `{` when a plain parse fails -- the same
+    technique llm/exclusion_judge.py's pre-P2 _parse_verdict() used before
+    structured output existed, revived because Anthropic turned out to need
+    it after all."""
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.removeprefix("```json").removeprefix("```").strip()
+        stripped = stripped.removesuffix("```").strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        # The model's real answer is always the trailing content (see the
+        # claude-haiku example above), so scan '{' positions right-to-left and
+        # take the first one that decodes cleanly through to the exact end of
+        # the string -- taking the *first* '{' in the string instead would grab
+        # an earlier brace from the prose itself (e.g. the model quoting the
+        # schema before answering) and silently return the wrong object.
+        starts = [i for i, ch in enumerate(stripped) if ch == "{"]
+        for start in reversed(starts):
+            try:
+                obj, end = json.JSONDecoder().raw_decode(stripped[start:])
+            except json.JSONDecodeError:
+                continue
+            if start + end == len(stripped):
+                return obj
+        raise
 
 
 T = TypeVar("T")

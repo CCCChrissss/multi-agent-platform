@@ -24,11 +24,12 @@ import asyncio
 from typing import Any
 
 from harness.agent_loop import AgentLoopIncomplete, StallGuard, run_tool_calling_loop, wrap_agent_exception
+from harness.output_capture import ToolCallLog
 from mcp_servers.gateway import MCPGateway
+from orchestrator.workflow_def import resolve_model, resolve_prompt
 from persistence.memory_policy import MemoryPolicy
 from persistence.memory_prompt import inject_procedural
 
-MODEL_NAME = "gemini-cheap"
 MAX_TURNS = 20
 _NOTIFY_TOOL_SUFFIXES = ("send_gmail_message", "send_slack_message")
 
@@ -36,8 +37,9 @@ _NOTIFY_TOOL_SUFFIXES = ("send_gmail_message", "send_slack_message")
 # below -- only used when a caller doesn't pass workflow_name (the frozen
 # mcp_servers/notified/agent.py compat shim, which only ever serves
 # stt_check_notify). Unlike llm/tsmc_judge.py/llm/exclusion_judge.py, this
-# module is genuinely shared across workflows (agents/notified/server.py
-# calls it for whichever workflow app.state.workflow_name says is live), so
+# module is genuinely shared across workflows (agents/runtime.py's
+# _notified_handler calls it for whichever workflow app.state.workflow_name
+# says is live), so
 # the scope can't be a module-level constant the way those two are -- doing
 # that here would mix stt_check_notify's and stt_exclusion_notify's
 # episodic/procedural memory the moment a grant exists for `notified` on
@@ -45,17 +47,6 @@ _NOTIFY_TOOL_SUFFIXES = ("send_gmail_message", "send_slack_message")
 # that mixing matters, even though no such grant exists yet).
 _DEFAULT_WORKFLOW_NAME = "stt_check_notify"
 _PROCEDURAL_LIMIT = 10
-
-_SYSTEM_PROMPT = (
-    "你是通知決策助手。你會收到一個 should_notify 判斷結果、一則主旨（subject）與內容（body）——"
-    "這個判斷是上游已經做完的場景決策，不是你要重新評估的東西。"
-    "should_notify 為 true 時，用給定的主旨與內容發送通知，並自行決定要用哪個管道："
-    "可以先用 recall_semantic_memory 工具查這位收件人過去表達過的通知管道偏好"
-    "（scope=[\"recipient\", 收件人 id]）；查不到就照預設管道（Gmail）發，不是錯誤，不用重試。"
-    "should_notify 為 false 時不用發送任何通知，這是正常情況，不是錯誤。"
-    "工具執行後你會看到結果；如果失敗，可以決定要不要換個方式重試或放棄，"
-    "不要重複重試同一個失敗的呼叫超過一次。"
-)
 
 
 def _finish(should_notify: bool, notified_ok: bool, log: list[str]) -> list[str]:
@@ -71,7 +62,7 @@ def _finish(should_notify: bool, notified_ok: bool, log: list[str]) -> list[str]
 
 
 async def _recall_prompt(
-    store: Any | None, memory_policy: MemoryPolicy | None, tenant: str, recipient_id: str, workflow_name: str
+    store: Any | None, memory_policy: MemoryPolicy | None, tenant: str, workflow_name: str, base_system_prompt: str
 ) -> str:
     """None store/policy leaves the prompt untouched -- same no-op contract
     as llm/tsmc_judge.py's equivalent recall wiring. procedural uses the
@@ -84,10 +75,12 @@ async def _recall_prompt(
     model already knows it's about to decide "send or not, which channel" --
     it can ask the `memory__recall_semantic_memory` tool for this recipient's
     preference itself, and a miss just degrades to the default channel.
-    `recipient_id` is surfaced in the user message below so the model has
-    something to build the tool call's `scope` from."""
+    `recipient_id` is surfaced in decide_and_notify()'s user message (outside
+    this step's declared prompt -- it's request context, not part of
+    input_schema) so the model has something to build the tool call's
+    `scope` from."""
     scope = (workflow_name, "notified")
-    return await inject_procedural(store, memory_policy, tenant=tenant, scope=scope, base_prompt=_SYSTEM_PROMPT, limit=_PROCEDURAL_LIMIT)
+    return await inject_procedural(store, memory_policy, tenant=tenant, scope=scope, base_prompt=base_system_prompt, limit=_PROCEDURAL_LIMIT)
 
 
 @wrap_agent_exception("notified")
@@ -98,27 +91,41 @@ async def decide_and_notify(
     subject: str,
     body: str,
     recipient_id: str = "default",
+    model: str | None = None,
+    system_prompt: str | None = None,
+    user_prompt: str | None = None,
     store: Any | None = None,
     memory_policy: MemoryPolicy | None = None,
     tenant: str = "default",
     workflow_name: str = _DEFAULT_WORKFLOW_NAME,
 ) -> list[str]:
-    system_prompt, tools = await asyncio.gather(
-        _recall_prompt(store, memory_policy, tenant, recipient_id, workflow_name),
+    # system_prompt/user_prompt/model come from the caller's workflow spec
+    # (agents/runtime.py renders workflows/definitions/*.yaml's `notified`
+    # step prompt/model via orchestrator.workflow_def.render_prompt()/
+    # resolve_model()). Callers with no spec in hand (mcp_servers/notified/agent.py's
+    # compat shim for the frozen workflows/simple_pipeline.py, see
+    # workflows/parity_check.py) fall back to `workflow_name`'s own declared
+    # prompt/model, so every path runs under the same content
+    # (docs/generic-agent-runtime-plan.md P1/P5).
+    system_prompt, user_prompt = resolve_prompt(
+        workflow_name,
+        "notified",
+        {"should_notify": should_notify, "subject": subject, "body": body},
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+    )
+    model = resolve_model(workflow_name, "notified", model=model)
+
+    rendered_system_prompt, tools = await asyncio.gather(
+        _recall_prompt(store, memory_policy, tenant, workflow_name, system_prompt),
         gateway.list_openai_tools(),
     )
     messages: list[dict] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"should_notify={should_notify}\n收件人 id: {recipient_id}\n主旨: {subject}\n內容: {body}"},
+        {"role": "system", "content": rendered_system_prompt},
+        {"role": "user", "content": f"收件人 id: {recipient_id}\n{user_prompt}"},
     ]
-    log: list[str] = []
-    notified_ok = False
-
-    def _on_tool_result(call: Any, arguments: dict, result_text: str, is_error: bool) -> None:
-        nonlocal notified_ok
-        log.append(f"{call.function.name}({arguments}) -> {result_text}{' [ERROR]' if is_error else ''}")
-        if not is_error and call.function.name.endswith(_NOTIFY_TOOL_SUFFIXES):
-            notified_ok = True
+    # docs/generic-agent-runtime-plan.md P2's `from: tool_log` declaration.
+    log = ToolCallLog()
 
     # A "no tool call" turn always finishes the loop below, so the only way
     # this loop can get stuck is retrying the same failed send -- exactly
@@ -126,18 +133,18 @@ async def decide_and_notify(
     # enforces it structurally instead of trusting the instruction alone.
     stall_guard = StallGuard(consecutive_limit=2)
     assistant_message = await run_tool_calling_loop(
-        MODEL_NAME,
+        model,
         messages,
         tools,
         gateway,
         node="notified",
         max_turns=MAX_TURNS,
         stall_guard=stall_guard,
-        on_tool_result=_on_tool_result,
+        on_tool_result=log.observe,
         raise_on_max_turns=False,
     )
     if assistant_message is None:
-        log.append("(stopped: reached max tool-calling turns)")
+        log.entries.append("(stopped: reached max tool-calling turns)")
     else:
-        log.append(assistant_message.content or "(model decided: no notification needed)")
-    return _finish(should_notify, notified_ok, log)
+        log.entries.append(assistant_message.content or "(model decided: no notification needed)")
+    return _finish(should_notify, log.any_succeeded(*_NOTIFY_TOOL_SUFFIXES), log.entries)

@@ -33,6 +33,15 @@ Scenarios:
     one for a needs_review completion (no confirmed-correct output to
     distill without a human decision -- see TODO.md's
     needs-review-decision-entry).
+  - mapping_renames_field / mapping_const_and_expr /
+    mapping_missing_source_fails_run / mapping_addresses_specific_step
+    (docs/generic-agent-runtime-plan.md P0): StepDef.input_mapping's three
+    source kinds (`from`/`const`/`expr`), each against an ad hoc WorkflowDef
+    with fake handlers (no live LLM/agent-server involved) -- a renamed
+    field, a const+expr pair landing in the dispatched command, a missing
+    `from:` source failing the run before any command is dispatched, and
+    `steps.<name>.<field>` addressing a specific step's output despite a
+    same-named field being overwritten in the flat merged namespace.
 """
 
 from __future__ import annotations
@@ -120,6 +129,7 @@ async def scenario_master_agent_single_step(bus, checkpointer) -> None:
                 name="stt",
                 command_type="stt.run",
                 completion_type="stt.completed",
+                model="local-qwen",
                 input_schema={
                     "type": "object",
                     "required": ["audio_ref"],
@@ -492,6 +502,294 @@ async def scenario_memory_writer_skips_needs_review(bus, checkpointer, store, me
             await _swallow_cancelled(t)
 
 
+async def scenario_mapping_renames_field(bus, checkpointer) -> None:
+    """P0 (docs/generic-agent-runtime-plan.md): input_mapping's
+    `from: "steps.<name>.<field>"` renames an upstream field to whatever
+    name the downstream step's input_schema declares -- same-name matching
+    (the pre-existing fallback) can't do this at all."""
+    workflow_def = WorkflowDef(
+        name="mapping_renames_field_verify",
+        steps=(
+            StepDef(
+                name="produce",
+                command_type="mrf.produce.run",
+                completion_type="mrf.produce.completed",
+                model="local-qwen",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                output_schema={
+                    "type": "object", "required": ["a"],
+                    "properties": {"a": {"type": "string"}}, "additionalProperties": False,
+                },
+            ),
+            StepDef(
+                name="consume",
+                command_type="mrf.consume.run",
+                completion_type="mrf.consume.completed",
+                model="local-qwen",
+                input_schema={
+                    "type": "object", "required": ["b"],
+                    "properties": {"b": {"type": "string"}}, "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object", "required": ["seen_b"],
+                    "properties": {"seen_b": {"type": "string"}}, "additionalProperties": False,
+                },
+                input_mapping={"b": {"from": "steps.produce.a"}},
+            ),
+        ),
+    )
+
+    async def produce_handler(payload: dict) -> dict:
+        return {"a": "hello-from-produce"}
+
+    async def consume_handler(payload: dict) -> dict:
+        return {"seen_b": payload["b"]}
+
+    tasks = [
+        asyncio.create_task(run_worker(bus, workflow_def, "produce", produce_handler, worker_id="mrf-produce")),
+        asyncio.create_task(run_worker(bus, workflow_def, "consume", consume_handler, worker_id="mrf-consume")),
+        asyncio.create_task(run_master(bus, workflow_def, worker_id="mrf-master", checkpointer=checkpointer)),
+    ]
+    thread_id = str(uuid.uuid4())
+    try:
+        await master_agent.start_run(bus, workflow_def, thread_id, {})
+        run = await _wait_for_terminal_run(thread_id, timeout=30)
+    finally:
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            await _swallow_cancelled(t)
+
+    assert run["status"] == "completed", run
+    assert run["state_payload"]["seen_b"] == "hello-from-produce", run
+    print(f"[mapping_renames_field] OK -- consume received the renamed field: {run['state_payload']['seen_b']!r}")
+
+
+async def scenario_mapping_const_and_expr(bus, checkpointer) -> None:
+    """P0: `const` and `expr` (Jinja2, rendered against the STEPS_KEY map)
+    both correctly land in the next step's dispatched command payload."""
+    workflow_def = WorkflowDef(
+        name="mapping_const_and_expr_verify",
+        steps=(
+            StepDef(
+                name="produce",
+                command_type="mce.produce.run",
+                completion_type="mce.produce.completed",
+                model="local-qwen",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                output_schema={
+                    "type": "object", "required": ["x"],
+                    "properties": {"x": {"type": "string"}}, "additionalProperties": False,
+                },
+            ),
+            StepDef(
+                name="consume",
+                command_type="mce.consume.run",
+                completion_type="mce.consume.completed",
+                model="local-qwen",
+                input_schema={
+                    "type": "object", "required": ["greeting", "count"],
+                    "properties": {"greeting": {"type": "string"}, "count": {"type": "integer"}},
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object", "required": ["greeting", "count"],
+                    "properties": {"greeting": {"type": "string"}, "count": {"type": "integer"}},
+                    "additionalProperties": False,
+                },
+                input_mapping={
+                    "greeting": {"expr": "hello {{ steps.produce.x }}"},
+                    "count": {"const": 3},
+                },
+            ),
+        ),
+    )
+
+    async def produce_handler(payload: dict) -> dict:
+        return {"x": "world"}
+
+    async def consume_handler(payload: dict) -> dict:
+        return {"greeting": payload["greeting"], "count": payload["count"]}
+
+    tasks = [
+        asyncio.create_task(run_worker(bus, workflow_def, "produce", produce_handler, worker_id="mce-produce")),
+        asyncio.create_task(run_worker(bus, workflow_def, "consume", consume_handler, worker_id="mce-consume")),
+        asyncio.create_task(run_master(bus, workflow_def, worker_id="mce-master", checkpointer=checkpointer)),
+    ]
+    thread_id = str(uuid.uuid4())
+    try:
+        await master_agent.start_run(bus, workflow_def, thread_id, {})
+        run = await _wait_for_terminal_run(thread_id, timeout=30)
+    finally:
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            await _swallow_cancelled(t)
+
+    assert run["status"] == "completed", run
+    assert run["state_payload"]["greeting"] == "hello world", run
+    assert run["state_payload"]["count"] == 3, run
+    print(f"[mapping_const_and_expr] OK -- const/expr both landed in consume's command: {run['state_payload']}")
+
+
+async def scenario_mapping_missing_source_fails_run(bus, checkpointer) -> None:
+    """P0: a `from:` source field the upstream step's output_schema declares
+    optional (not `required`) but doesn't actually return this run -- the
+    downstream step's input_mapping can't resolve it, so the run must end
+    'failed' with a readable message, and the downstream command must never
+    be dispatched (checked directly against event_log, not just against a
+    worker that happens not to be running)."""
+    workflow_def = WorkflowDef(
+        name="mapping_missing_source_verify",
+        steps=(
+            StepDef(
+                name="produce",
+                command_type="mms.produce.run",
+                completion_type="mms.produce.completed",
+                model="local-qwen",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                # "a" is declared but NOT required -- produce_handler below
+                # deliberately omits it, mirroring a real optional output field.
+                output_schema={
+                    "type": "object", "required": [],
+                    "properties": {"a": {"type": "string"}}, "additionalProperties": False,
+                },
+            ),
+            StepDef(
+                name="consume",
+                command_type="mms.consume.run",
+                completion_type="mms.consume.completed",
+                model="local-qwen",
+                input_schema={
+                    "type": "object", "required": ["b"],
+                    "properties": {"b": {"type": "string"}}, "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object", "required": ["seen_b"],
+                    "properties": {"seen_b": {"type": "string"}}, "additionalProperties": False,
+                },
+                input_mapping={"b": {"from": "steps.produce.a"}},
+            ),
+        ),
+    )
+
+    async def produce_handler(payload: dict) -> dict:
+        return {}  # no "a" -- the field input_mapping needs isn't there
+
+    tasks = [
+        asyncio.create_task(run_worker(bus, workflow_def, "produce", produce_handler, worker_id="mms-produce")),
+        asyncio.create_task(run_master(bus, workflow_def, worker_id="mms-master", checkpointer=checkpointer)),
+    ]
+    thread_id = str(uuid.uuid4())
+    try:
+        await master_agent.start_run(bus, workflow_def, thread_id, {})
+        run = await _wait_for_terminal_run(thread_id, timeout=30)
+    finally:
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            await _swallow_cancelled(t)
+
+    assert run["status"] == "failed", run
+    assert "steps.produce.a" in run["state_payload"].get("error", ""), run
+    print(f"[mapping_missing_source_fails_run] OK -- run failed with: {run['state_payload']['error']!r}")
+
+    consume_commands = await _count_topic_events(thread_id, commands_topic(workflow_def.name, "consume"))
+    assert consume_commands == 0, f"expected no 'consume' command ever dispatched, found {consume_commands}"
+    print("[mapping_missing_source_fails_run] OK -- no downstream command was ever dispatched")
+
+
+async def scenario_mapping_addresses_specific_step(bus, checkpointer) -> None:
+    """P0: two steps producing a same-named field ('value') would silently
+    clobber each other in the flat merged namespace (the later one always
+    wins) -- `steps.<name>.<field>` addressing must still resolve the
+    *earlier* step's own copy, something the flat namespace has no way to
+    express at all."""
+    workflow_def = WorkflowDef(
+        name="mapping_addresses_specific_step_verify",
+        steps=(
+            StepDef(
+                name="step_a",
+                command_type="mas.a.run",
+                completion_type="mas.a.completed",
+                model="local-qwen",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                output_schema={
+                    "type": "object", "required": ["value"],
+                    "properties": {"value": {"type": "string"}}, "additionalProperties": False,
+                },
+            ),
+            StepDef(
+                name="step_b",
+                command_type="mas.b.run",
+                completion_type="mas.b.completed",
+                model="local-qwen",
+                input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+                output_schema={
+                    "type": "object", "required": ["value"],
+                    "properties": {"value": {"type": "string"}}, "additionalProperties": False,
+                },
+            ),
+            StepDef(
+                name="step_c",
+                command_type="mas.c.run",
+                completion_type="mas.c.completed",
+                model="local-qwen",
+                input_schema={
+                    "type": "object", "required": ["picked_a"],
+                    "properties": {"picked_a": {"type": "string"}}, "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object", "required": ["result"],
+                    "properties": {"result": {"type": "string"}}, "additionalProperties": False,
+                },
+                input_mapping={"picked_a": {"from": "steps.step_a.value"}},
+            ),
+        ),
+    )
+
+    async def a_handler(payload: dict) -> dict:
+        return {"value": "from-A"}
+
+    async def b_handler(payload: dict) -> dict:
+        return {"value": "from-B"}
+
+    async def c_handler(payload: dict) -> dict:
+        return {"result": payload["picked_a"]}
+
+    tasks = [
+        asyncio.create_task(run_worker(bus, workflow_def, "step_a", a_handler, worker_id="mas-a")),
+        asyncio.create_task(run_worker(bus, workflow_def, "step_b", b_handler, worker_id="mas-b")),
+        asyncio.create_task(run_worker(bus, workflow_def, "step_c", c_handler, worker_id="mas-c")),
+        asyncio.create_task(run_master(bus, workflow_def, worker_id="mas-master", checkpointer=checkpointer)),
+    ]
+    thread_id = str(uuid.uuid4())
+    try:
+        await master_agent.start_run(bus, workflow_def, thread_id, {})
+        run = await _wait_for_terminal_run(thread_id, timeout=30)
+    finally:
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            await _swallow_cancelled(t)
+
+    assert run["status"] == "completed", run
+    # The flat merged namespace's "value" is "from-B" (step_b overwrote
+    # step_a) -- proving result == "from-A" proves the mapping addressed
+    # step_a specifically, not just whatever the flat namespace happened to
+    # hold by the time step_c ran.
+    assert run["state_payload"]["value"] == "from-B", run
+    assert run["state_payload"]["result"] == "from-A", run
+    print(f"[mapping_addresses_specific_step] OK -- step_c got step_a's value ({run['state_payload']['result']!r}) despite step_b overwriting 'value' to {run['state_payload']['value']!r} in the flat namespace")
+
+
+async def _count_topic_events(thread_id: str, topic: str) -> int:
+    async with await psycopg.AsyncConnection.connect(os.environ["PERSISTENCE_DATABASE_URL"]) as conn:
+        cur = await conn.execute("SELECT count(*) FROM event_log WHERE thread_id = %s AND topic = %s", (thread_id, topic))
+        (count,) = await cur.fetchone()
+        return count
+
+
 async def _poll_for_memory_item(store, kind: MemoryKind, tenant: str, scope: tuple[str, ...], key: str, *, timeout: float = 15.0, poll_interval: float = 0.5):
     # store.aget() bypasses recall()'s status="active" gate on purpose --
     # docs/knowledge-distillation-plan.md P5 has memory_writer write episodic
@@ -562,7 +860,13 @@ async def _wait_for_terminal_run(thread_id: str, timeout: float, poll_interval: 
 async def main() -> None:
     ensure_call_log_schema()
     run_state.ensure_schema()
-    bus = get_event_bus()
+    # Short poll_interval: 13 scenarios share one bus/listener in one process,
+    # repeatedly creating and tearing down short-lived worker/master
+    # subscriptions on the same channel (see event_bus's _SharedListener) --
+    # unlike a long-running production process, that churn can hit the
+    # relisten race documented in event_bus/postgres.py. Polling this often
+    # bounds a missed NOTIFY to a couple seconds instead of the 60s default.
+    bus = get_event_bus(poll_interval=5.0)
     await bus.ensure_schema()
 
     async with get_checkpointer() as checkpointer, open_agent_memory(str(_POLICY_PATH)) as (store, memory_policy):
@@ -578,6 +882,10 @@ async def main() -> None:
         await scenario_duplicate_publish_no_double_send(bus)
         await scenario_memory_writer_distills_episodic(bus, checkpointer, store, memory_policy)
         await scenario_memory_writer_skips_needs_review(bus, checkpointer, store, memory_policy)
+        await scenario_mapping_renames_field(bus, checkpointer)
+        await scenario_mapping_const_and_expr(bus, checkpointer)
+        await scenario_mapping_missing_source_fails_run(bus, checkpointer)
+        await scenario_mapping_addresses_specific_step(bus, checkpointer)
 
     print("\nAll orchestrator smoke tests passed.")
 

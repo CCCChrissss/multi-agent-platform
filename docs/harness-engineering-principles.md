@@ -145,3 +145,13 @@
 7. **如果要讓這個元件自動改進**：有沒有固定評測集、regression set、晉級關卡、回滾機制？高風險變更是否強制人工審查？
 8. **這個 harness 元件是在補模型短處，還是在做「定義好壞標準」的事**？前者要預期會過期，後者才是長期資產——評測與驗收邏輯優先投資。
 9. **（對照本專案目標）這是平台通用能力，還是場景邏輯**？回饋迴路、驗收邏輯等 harness 元件若具備通用性，應該放進基礎建設層（如 gateway/、service registry），而不是寫死在單一場景的 workflow 節點裡。
+
+## 新增 MCP server 的檢查清單
+
+MCP server 的持續擴充會是這個平台往後最常做的主線工程工作，新工具的驗收標準不是「會動」，而是回傳值有沒有構成 agent 的回饋迴路（呼應上面第 2 點）：
+
+1. **成功時**，回傳值有沒有讓 agent 知道下一步能做什麼？（例如 `browse_semantic_memory` 回 children/siblings/parent，是為了讓模型自己決定往下鑽或回頭，不是只回一坨資料）
+2. **失敗時**，錯誤訊息是寫給 agent 看的，還是寫給人看的？工具本體要用 `@guarded_tool`（見 [../mcp_servers/tool_errors.py](../mcp_servers/tool_errors.py)）包住，讓未分類的例外變成 `ToolDependencyError` 而不是 raw traceback；能區分「retry 換輸入可能有用」（`ToolInputError`）跟「retry 現在沒用」（`ToolDependencyError`）就分開分類。
+3. **查無結果時**，回的是空的，還是「明確的空」？（`lookup` 的 `_UNKNOWN_PROFILE` 帶 `note: "查無資料，非監控清單公司"`，而不是回 `{}`——這一行是 agent 能不能從查無資料中恢復的分界）
+
+新增一個 server 固定三步，不含 client.py（那是 [MCPClient](../mcp_servers/base_client.py) 唯一的 client 實作，per-server 不再各自維護一份）：`mcp_servers/<name>/server.py` → `policy.yaml` 的 `servers:` 註冊 → `policy.yaml` 的 role/principal 授權。寫完別急著整條鏈路跑一次——先補一份 `mcp_servers/<name>/smoke_test.py`（見 [testing.md](testing.md)），直接用 `MCPClient` 連上 server 的 stdio 子行程驗上面三件事，不碰 LLM/agent/gateway，秒級回饋；端到端 smoke test 留給「這個工具接進真實鏈路後行為不變」這一層判斷。

@@ -38,7 +38,13 @@ def _log_denied(action: str, principal: str | None, namespace: tuple[str, ...]) 
 
 
 async def _log_memory_call(
-    name: str, request: dict[str, Any], response: dict[str, Any] | None, *, denied: bool, latency_ms: int
+    name: str,
+    request: dict[str, Any],
+    response: dict[str, Any] | None,
+    *,
+    denied: bool,
+    latency_ms: int,
+    thread_id: str | None = None,
 ) -> None:
     """kind='memory' call_log rows, closing the audit gap recall()/browse()/
     remember() had relative to the 'llm'/'tool' kinds (TODO.md's
@@ -48,15 +54,16 @@ async def _log_memory_call(
     -- call_log must not become a second copy of whatever's stored in memory
     (e.g. a recipient's notification preference).
 
-    Note: when recall()/browse() run inside mcp_servers/memory/server.py's
-    stdio subprocess, current_thread_id is always None here -- that
-    ContextVar is set per-request in the calling agent's own process
-    (agents/envelope.py) and can't cross the stdio boundary the way the
-    subprocess's fixed-for-its-lifetime principal does (see that module's
-    docstring). The `node` column still identifies the principal; only the
-    thread_id correlation is missing for MCP-originated memory calls.
+    `thread_id`: recall()/browse() pass this through explicitly
+    (docs/generic-agent-runtime-plan.md P7) -- when they run inside
+    mcp_servers/memory/server.py's stdio subprocess, current_thread_id was
+    never set there (that ContextVar is set per-request in the calling
+    agent's own process, agents/envelope.py, and can't cross the stdio
+    boundary the way the subprocess's fixed-for-its-lifetime principal does).
+    None (the in-process-caller default) falls back to the ContextVar inside
+    log_call(), unchanged from before P7.
     """
-    await log_call("memory", name, request, response, False, latency_ms, denied=denied)
+    await log_call("memory", name, request, response, False, latency_ms, denied=denied, thread_id=thread_id)
 
 
 class MemoryKind(str, Enum):
@@ -158,6 +165,29 @@ async def list_pending(store: Any, kind: MemoryKind, scope: Sequence[str], key: 
     return items
 
 
+_LIST_READABLE_LIMIT = 200
+
+
+async def list_readable(store: Any, policy: MemoryPolicy, kind: MemoryKind, *, tenant: str, limit: int = _LIST_READABLE_LIMIT) -> list[SearchItem]:
+    """Every memory of `kind` under `tenant`, any status, filtered down to
+    just what current_node_name's grant actually allows reading -- read-only
+    introspection for a demo UI's memory-browsing tab (docs/ui-backend-
+    integration-plan.md 記憶 tab), not a scenario-code hot path (recall()/
+    browse() stay what agents actually call on their real turns).
+
+    Unlike list_pending(), returns active+pending both (a reviewer-facing
+    browser wants the whole picture, not just the queue). Unlike browse(),
+    doesn't assume a namespace tree -- episodic/procedural have no children
+    to walk, just a flat scope-keyed list, so this does one broad asearch()
+    over the whole tenant/kind and filters items down with the same
+    per-item can_read() a recall() of that exact namespace would use (not
+    for_browse=True -- these are leaf items, not an ancestor listing)."""
+    namespace_prefix = (tenant, kind.value)
+    candidates = await store.asearch(namespace_prefix, limit=limit)
+    principal = current_node_name.get()
+    return [item for item in candidates if can_read(policy, principal, item.namespace)]
+
+
 async def recall(
     store: Any,
     policy: MemoryPolicy,
@@ -168,6 +198,7 @@ async def recall(
     query: str | None = None,
     filter: dict[str, Any] | None = None,
     limit: int = 5,
+    thread_id: str | None = None,
 ) -> list[SearchItem]:
     """Fetch memories under `(tenant, kind, *scope)`. A denied read returns an
     empty list (fail-closed) instead of raising, so a policy miss degrades to
@@ -176,20 +207,32 @@ async def recall(
     Only `status="active"` memories are ever returned (docs/knowledge-distillation-plan.md
     §5 P0) -- a caller-supplied `filter` is merged with, not able to override,
     this constraint, so a `pending` memory (awaiting the M5 quality gate) can
-    never leak into a prompt through this path."""
+    never leak into a prompt through this path.
+
+    `thread_id` (docs/generic-agent-runtime-plan.md P7): mcp_servers/memory/server.py's
+    recall_semantic_memory passes this through from the calling agent's
+    MCPGateway.call_tool() (current_thread_id can't cross the stdio
+    subprocess boundary on its own) so call_log rows from MCP-originated
+    calls still correlate to a run; every in-process caller leaves it None
+    and _log_memory_call() falls back to the ContextVar as before."""
     principal = current_node_name.get()
     namespace = build_namespace(kind, tenant, scope)
     effective_filter = {**(filter or {}), "status": "active"}
     request = {"namespace": list(namespace), "query": query, "limit": limit}
     if not can_read(policy, principal, namespace):
         _log_denied("read", principal, namespace)
-        await _log_memory_call("recall", request, None, denied=True, latency_ms=0)
+        await _log_memory_call("recall", request, None, denied=True, latency_ms=0, thread_id=thread_id)
         return []
     start = time.monotonic()
     items = await store.asearch(namespace, query=query, filter=effective_filter, limit=limit)
     latency_ms = int((time.monotonic() - start) * 1000)
     await _log_memory_call(
-        "recall", request, {"count": len(items), "keys": [item.key for item in items]}, denied=False, latency_ms=latency_ms
+        "recall",
+        request,
+        {"count": len(items), "keys": [item.key for item in items]},
+        denied=False,
+        latency_ms=latency_ms,
+        thread_id=thread_id,
     )
     return items
 
@@ -207,6 +250,7 @@ async def browse(
     tenant: str,
     prefix: Sequence[str],
     limit: int = 10,
+    thread_id: str | None = None,
 ) -> dict[str, Any]:
     """List what's one level below `(tenant, kind, *prefix)`, without
     fetching full content -- the "ls" counterpart to recall()'s "cat"
@@ -235,13 +279,16 @@ async def browse(
     P0). `alist_namespaces()` itself has no filter/status concept, so a
     namespace containing *only* pending memories still surfaces its bare
     segment name in `children`/`siblings` with `summary=None` -- a known,
-    accepted gap (same doc, "殘留缺口"), not a bug."""
+    accepted gap (same doc, "殘留缺口"), not a bug.
+
+    `thread_id`: see recall()'s docstring -- same P7 passthrough, same None
+    default/fallback behavior."""
     principal = current_node_name.get()
     namespace = build_namespace(kind, tenant, prefix)
     request = {"namespace": list(namespace), "limit": limit}
     if not can_read(policy, principal, namespace, for_browse=True):
         _log_denied("browse", principal, namespace)
-        await _log_memory_call("browse", request, None, denied=True, latency_ms=0)
+        await _log_memory_call("browse", request, None, denied=True, latency_ms=0, thread_id=thread_id)
         return {}
 
     start = time.monotonic()
@@ -319,6 +366,7 @@ async def browse(
         {"children": len(children), "items": len(items), "truncated": truncated},
         denied=False,
         latency_ms=latency_ms,
+        thread_id=thread_id,
     )
     return result
 

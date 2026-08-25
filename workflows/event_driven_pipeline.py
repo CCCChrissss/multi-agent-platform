@@ -64,9 +64,12 @@ def build_step_handlers(workflow_def: WorkflowDef) -> dict[str, Handler]:
         return {"notified_log": log}
 
     if workflow_def.name == _EXCLUSION_WORKFLOW_NAME:
-        # llm/exclusion_judge.py already returns should_notify/subject/body
-        # itself (see its _build_result()) -- unlike the TSMC scenario below,
-        # there's no scenario glue left to do here beyond forwarding.
+        # llm/exclusion_judge.py's output is just the judgment fields
+        # (involves_exclusion/matched_articles/reason) -- notified's
+        # should_notify/subject/body are derived by `notified`'s own
+        # input_mapping (workflows/definitions/stt_exclusion_notify.yaml,
+        # docs/generic-agent-runtime-plan.md P0), not scenario glue here, so
+        # there's nothing left to do below beyond forwarding the judgment.
         async def check_handler(payload: dict) -> dict:
             transcript = (payload.get("transcript") or "").strip()
             return await check_agent_judge_exclusion(transcript)

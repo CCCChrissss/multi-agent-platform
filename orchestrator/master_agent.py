@@ -58,7 +58,7 @@ import datetime as dt
 
 from event_bus.base import Event, EventBus, commands_topic, deterministic_event_id, events_topic
 from orchestrator import run_state
-from orchestrator.workflow_def import WorkflowDef
+from orchestrator.workflow_def import STEPS_KEY, WorkflowDef, resolve_step_input
 from persistence.event_checkpoints import record_step
 
 DEFAULT_STEP_TIMEOUT_SECONDS = 300
@@ -144,9 +144,23 @@ async def run_deadline_sweeper(*, checkpointer, poll_interval_seconds: float = D
                 checkpointer,
                 thread_id=row["thread_id"],
                 step_name=row["current_step"],
-                state_payload=row["state_payload"],
+                state_payload=_without_steps(row["state_payload"]),
             )
         await asyncio.sleep(poll_interval_seconds)
+
+
+def _without_steps(payload: dict) -> dict:
+    """Strip STEPS_KEY before a state_payload reaches record_step() --
+    docs/generic-agent-runtime-plan.md P0 settled this deliberately: the
+    checkpoint mirror (persistence/event_checkpoints.py) is a derived,
+    after-the-fact audit projection, and STEPS_KEY's per-step addressing adds
+    nothing to that audit (record_step() already writes one row per
+    transition, so which step produced what is already recoverable by
+    diffing consecutive checkpoints; the flat merge already holds every
+    value). orchestrator_runs.state_payload -- the actual source of truth --
+    keeps STEPS_KEY; only the mirror excludes it, so channel_values' key set
+    stays exactly what it was before input_mapping existed."""
+    return {k: v for k, v in payload.items() if k != STEPS_KEY}
 
 
 def _log_lost_race(thread_id: str, attempted: str) -> None:
@@ -198,7 +212,7 @@ async def _handle_completion(bus: EventBus, workflow_def: WorkflowDef, completio
             checkpointer,
             thread_id=completion.thread_id,
             step_name=step_name,
-            state_payload=run_state.merge_state(run, state_updates),
+            state_payload=_without_steps(run_state.merge_state(run, state_updates)),
         )
 
     finished_step = next((s for s in workflow_def.steps if s.completion_type == completion.event_type), None)
@@ -249,31 +263,57 @@ async def _handle_completion(bus: EventBus, workflow_def: WorkflowDef, completio
     # no filtering needed before folding it into persisted state / forwarding
     # as the next command's payload.
     business_payload = completion.payload["output"]
+    # Alongside the flat merge (run_state.merge_state), also record this
+    # step's own output addressably under STEPS_KEY -- input_mapping's
+    # `from: "steps.<name>.<field>"` entries (workflow_def.resolve_step_input)
+    # resolve against this, not the flat namespace, so two steps producing a
+    # same-named field can still be told apart downstream. Gated on the
+    # workflow actually using input_mapping anywhere: a workflow that
+    # doesn't (stt_check_notify.yaml today) must see byte-identical
+    # state_payload to before P0 -- the unmodified checkpoint_parity smoke
+    # scenario is what enforces that.
+    state_updates = (
+        run_state.record_step_output(run, finished_step.name, business_payload)
+        if workflow_def.uses_input_mapping()
+        else business_payload
+    )
 
     next_step = workflow_def.next_step(finished_step.name)
     if next_step is None:
-        if not await run_state.mark_terminal(completion.thread_id, "completed", business_payload):
+        if not await run_state.mark_terminal(completion.thread_id, "completed", state_updates):
             _log_lost_race(completion.thread_id, "marking 'completed'")
             return
-        await _checkpoint(finished_step.name, business_payload)
+        await _checkpoint(finished_step.name, state_updates)
         return
 
     # Accumulate the run's full state, not just this step's delta -- see
     # run_state.merge_state's docstring.
-    merged_payload = run_state.merge_state(run, business_payload)
+    merged_payload = run_state.merge_state(run, state_updates)
 
-    # The *dispatched* command, though, must be filtered down to next_step's
-    # own declared input_schema properties -- forwarding the full
-    # merged_payload verbatim would include fields earlier steps
-    # contributed (e.g. "audio_ref" surviving into check's command) that
-    # next_step never declared, and every input_schema here sets
-    # additionalProperties: false, so an unfiltered forward fails
-    # next_step.validate_input() the moment a workflow has more than two
-    # steps. This is the input_fields-style filtering
-    # docs/agent-api-contract.md always intended (see its "三個現有 agent 的
-    # 合約規格" table) -- it just never got implemented when input_fields
-    # was replaced by full JSON Schema validation.
-    next_step_payload = {k: v for k, v in merged_payload.items() if k in next_step.input_schema.get("properties", {})}
+    # The *dispatched* command must be filtered down to next_step's own
+    # declared input_schema properties -- forwarding the full merged_payload
+    # verbatim would include fields earlier steps contributed (e.g.
+    # "audio_ref" surviving into check's command) that next_step never
+    # declared, and every input_schema here sets additionalProperties: false.
+    # resolve_step_input() does that filtering, using next_step.input_mapping
+    # per-field where declared and falling back to the pre-existing
+    # same-name match otherwise (docs/generic-agent-runtime-plan.md P0).
+    try:
+        next_step_payload = resolve_step_input(next_step, merged_payload)
+        next_step.validate_input(next_step_payload)
+    except ValueError as exc:
+        # Either the mapping itself couldn't resolve (a required source
+        # field isn't there yet) or the resolved payload still fails
+        # next_step's own schema -- either way this is a data problem with
+        # this run, not a code bug, and dispatching the command anyway would
+        # only fail next_step.validate_input() again on the worker side.
+        # Fail the run here instead, and never publish a command doomed to fail.
+        error_updates = {**state_updates, "error": str(exc)}
+        if not await run_state.mark_terminal(completion.thread_id, "failed", error_updates):
+            _log_lost_race(completion.thread_id, f"marking 'failed' (input_mapping for step {next_step.name!r})")
+            return
+        await _checkpoint(finished_step.name, error_updates)
+        return
 
     # Publish the next command *before* persisting the advance, and with a
     # deterministic event_id: if this process crashes (or ack() fails)
@@ -291,7 +331,7 @@ async def _handle_completion(bus: EventBus, workflow_def: WorkflowDef, completio
             payload=next_step_payload,
         )
     )
-    if not await run_state.advance(completion.thread_id, next_step.name, business_payload, step_deadline_at=_deadline()):
+    if not await run_state.advance(completion.thread_id, next_step.name, state_updates, step_deadline_at=_deadline()):
         _log_lost_race(completion.thread_id, f"advancing to step {next_step.name!r}")
         return
-    await _checkpoint(finished_step.name, business_payload)
+    await _checkpoint(finished_step.name, state_updates)

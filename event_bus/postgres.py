@@ -244,9 +244,22 @@ class _SharedListener:
             self._notify_task = None
 
         if not self._waiters:
-            if self._conn is not None:
-                await self._conn.close()
-                self._conn = None
+            # Deliberately NOT closing the connection here. The previous
+            # close-now/reconnect-in-register() cycle left a window between
+            # "old connection gone" and "new connection's LISTEN takes
+            # effect" wide enough (TCP connect + auth) for a NOTIFY fired in
+            # between to be silently dropped -- Postgres NOTIFY is
+            # fire-and-forget to a connection that isn't LISTENing (see
+            # module docstring). Keeping the connection open (LISTEN state
+            # and all) means the only gap left is two local SQL statements
+            # (UNLISTEN */LISTEN) on the next _relisten(), not a network
+            # round trip -- a channel with zero local waiters staying
+            # LISTENed in the meantime just costs one ignored NOTIFY if it
+            # fires, same as the documented false-collision case above.
+            # ponytail: idle listener connection stays open indefinitely
+            # once any subscription has ever existed on this bus -- add an
+            # idle timeout that actually closes it if a bus whose
+            # subscriptions permanently end needs the connection back.
             self._generation += 1
             return
 

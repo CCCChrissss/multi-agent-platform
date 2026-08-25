@@ -13,6 +13,11 @@ servers: # the gateway launches each of these once, up front
   lookup:   {module: mcp_servers.lookup.server}
   notified: {module: mcp_servers.notified.server}
   memory:   {module: mcp_servers.memory.server}
+  # docs/ui-backend-integration-plan.md P0: the one real tool a from-scratch
+  # UI-built agent has to call. No principal below grants it -- the whole
+  # point is that the grant gets written by the UI when someone creates that
+  # agent, not pre-declared here.
+  calc:     {module: mcp_servers.calc.server}
 
 roles: # reusable tool bundles
   transcriber: {allow: ["stt__*", "format__*"]}

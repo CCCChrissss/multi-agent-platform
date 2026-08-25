@@ -22,17 +22,44 @@ import asyncio
 import json
 from typing import Any
 
-from harness.agent_loop import AgentLoopIncomplete, StallGuard, run_tool_calling_loop, wrap_agent_exception
+from harness.agent_loop import (
+    AgentLoopIncomplete,
+    StallGuard,
+    parse_structured_json,
+    run_tool_calling_loop,
+    wrap_agent_exception,
+)
 from mcp_servers.gateway import MCPGateway
+from orchestrator.workflow_def import resolve_model, resolve_prompt
 from persistence.memory import GLOBAL_TENANT, MemoryKind, recall
 from persistence.memory_policy import MemoryPolicy
 from persistence.memory_prompt import inject_procedural
 
-MODEL_NAME = "local-qwen"
 MAX_TURNS = 20
 _RETRY_MAX_TURNS = 5
 _TSMC_QUERY = "台積電"
 _LOOKUP_TOOL = "lookup__query_company_profile"
+
+# docs/generic-agent-runtime-plan.md P2's `from: model` declaration --
+# forces the model's final (no-tool-call) turn to be exactly this shape via
+# LiteLLM's structured-output param, so _parse_verdict() no longer needs to
+# defend against stray prose. Verified to coexist with `tools` in the same
+# call for all three gateway/config.yaml models
+# (scripts/check_structured_output_support.py) -- no text-parsing fallback
+# needed.
+_VERDICT_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "tsmc_verdict",
+        "schema": {
+            "type": "object",
+            "properties": {"mentions_tsmc": {"type": "boolean"}},
+            "required": ["mentions_tsmc"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+}
 
 # (workflow_name, step_name) scope for this step's episodic/procedural memory
 # (docs/long-term-memory-plan.md §3.2). Hardcoded to this demo workflow's name
@@ -47,12 +74,6 @@ _PROCEDURAL_LIMIT = 10
 # mcp_servers/policy.yaml's `_global/semantic/company/*` grant for `check`.
 _ALIAS_SCOPE = ("company", "tsmc")
 _ALIAS_LIMIT = 5
-
-_SYSTEM_PROMPT = (
-    "你是一個文字分類助手。判斷使用者提供的文字內容是否提到台積電"
-    "（包含別名，例如 TSMC、台灣積體電路製造）。"
-    '直接用純文字回答，格式固定為 {"mentions_tsmc": true} 或 {"mentions_tsmc": false}，不要有其他文字。'
-)
 
 _CONFLICT_PROMPT = (
     "系統查核（確定性字串比對，非模型判斷）：文字中包含台積電的已知別名字串，"
@@ -98,7 +119,7 @@ def _alias_hit(text: str, aliases: list[str]) -> bool:
 
 
 def _parse_verdict(content: str) -> bool:
-    return bool(json.loads(content)["mentions_tsmc"])
+    return bool(parse_structured_json(content)["mentions_tsmc"])
 
 
 @wrap_agent_exception("check")
@@ -106,15 +127,30 @@ async def mentions_tsmc(
     gateway: MCPGateway,
     text: str,
     *,
+    model: str | None = None,
+    system_prompt: str | None = None,
+    user_prompt: str | None = None,
     store: Any | None = None,
     memory_policy: MemoryPolicy | None = None,
     tenant: str = "default",
 ) -> bool:
+    # system_prompt/user_prompt/model come from the caller's workflow spec
+    # (agents/runtime.py renders workflows/definitions/*.yaml's `check` step
+    # prompt/model via orchestrator.workflow_def.render_prompt()/resolve_model()).
+    # Callers with no spec in hand (workflows/simple_pipeline.py, frozen -- see
+    # workflows/parity_check.py) fall back to _MEMORY_SCOPE's own workflow's
+    # declared prompt/model, so every path runs under the same content
+    # (docs/generic-agent-runtime-plan.md P1/P5).
+    system_prompt, user_prompt = resolve_prompt(
+        *_MEMORY_SCOPE, {"transcript": text}, system_prompt=system_prompt, user_prompt=user_prompt
+    )
+    model = resolve_model(*_MEMORY_SCOPE, model=model)
+
     # None of these three depend on each other's result -- run them concurrently
     # instead of stacking three DB/MCP round trips on the request hot path.
-    aliases, system_prompt, all_tools = await asyncio.gather(
+    aliases, rendered_system_prompt, all_tools = await asyncio.gather(
         _lookup_tsmc_aliases(gateway, store, memory_policy),
-        inject_procedural(store, memory_policy, tenant=tenant, scope=_MEMORY_SCOPE, base_prompt=_SYSTEM_PROMPT, limit=_PROCEDURAL_LIMIT),
+        inject_procedural(store, memory_policy, tenant=tenant, scope=_MEMORY_SCOPE, base_prompt=system_prompt, limit=_PROCEDURAL_LIMIT),
         gateway.list_openai_tools(),
     )
     backstop_hit = _alias_hit(text, aliases) if aliases is not None else None
@@ -131,8 +167,8 @@ async def mentions_tsmc(
         if t["function"]["name"] != _LOOKUP_TOOL and not t["function"]["name"].startswith("memory__")
     ]
     messages: list[dict] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": text},
+        {"role": "system", "content": rendered_system_prompt},
+        {"role": "user", "content": user_prompt},
     ]
 
     # Only the safety-net branch below can loop without reaching a verdict
@@ -145,7 +181,14 @@ async def mentions_tsmc(
     # still executes one if the model hallucinates it; gateway.call_tool
     # fails closed on it.
     assistant_message = await run_tool_calling_loop(
-        MODEL_NAME, messages, tools, gateway, node="check", max_turns=MAX_TURNS, stall_guard=stall_guard
+        model,
+        messages,
+        tools,
+        gateway,
+        node="check",
+        max_turns=MAX_TURNS,
+        stall_guard=stall_guard,
+        response_format=_VERDICT_SCHEMA,
     )
     model_result = _parse_verdict(assistant_message.content)
 
@@ -153,7 +196,13 @@ async def mentions_tsmc(
         messages.append({"role": "assistant", "content": assistant_message.content})
         messages.append({"role": "user", "content": _CONFLICT_PROMPT})
         retry_message = await run_tool_calling_loop(
-            MODEL_NAME, messages, tools, gateway, node="check", max_turns=_RETRY_MAX_TURNS
+            model,
+            messages,
+            tools,
+            gateway,
+            node="check",
+            max_turns=_RETRY_MAX_TURNS,
+            response_format=_VERDICT_SCHEMA,
         )
         model_result = _parse_verdict(retry_message.content)
         if model_result is False:
