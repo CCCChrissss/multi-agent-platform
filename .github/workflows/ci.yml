@@ -5,6 +5,17 @@ on:
   pull_request:
 
 jobs:
+  windows-static-compatibility:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      # Dependency-free checks: this job deliberately does not run uv sync.
+      - run: python scripts/static_compat_check.py
+      - run: python -m services.stt.temp_audio_smoke_test
+
   gather-concurrency-smoke-test:
     runs-on: ubuntu-latest
     steps:

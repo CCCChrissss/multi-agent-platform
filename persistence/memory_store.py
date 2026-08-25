@@ -40,7 +40,7 @@ def get_memory_store():
     doesn't drill into a scalar, so there's no per-kind branching here.
     Embedding goes through gateway/client.py's aembed() -- the same LiteLLM
     Gateway every other model call uses -- so swapping the embedding
-    provider only touches gateway/config.yaml (CLAUDE.md's "AI 基礎建設要
+    provider only touches gateway/config.yaml (AGENTS.md's "AI 基礎建設要
     素件化、可替換").
     """
     database_url = os.environ["PERSISTENCE_DATABASE_URL"]

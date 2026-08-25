@@ -6,7 +6,7 @@
 2. 它跟我們現在 [persistence/checkpointer.py](../persistence/checkpointer.py) 存的東西差在哪——這兩件事很容易混淆，因為兩者都「寫進 Postgres、都跨 process 存活」。
 3. 要導入到這個平台，具體要動哪些檔案、分幾個階段。
 
-**先講結論**：長期記憶（`BaseStore`）跟 checkpointer 不是同一層東西，也不能互相取代。checkpointer 回答「**這一次執行跑到哪、狀態長什麼樣**」，長期記憶回答「**跨越所有執行，這個平台學到了什麼**」。而且——這是本專案特有的重點——**我們的事件驅動路徑根本沒有用 checkpointer**（`orchestrator_runs` 取代了它），所以長期記憶**不能**照官方教學那樣掛在 `graph.compile(store=...)` 上，必須做成一個跟 `persistence/checkpointer.py` 平行的獨立元件，讓同步路徑、事件驅動路徑、以及 `agents/` 三個獨立 HTTP service 都能用同一份記憶。
+**先講結論**：長期記憶（`BaseStore`）跟 checkpointer 不是同一層東西，也不能互相取代。checkpointer 回答「**這一次執行跑到哪、狀態長什麼樣**」，長期記憶回答「**跨越所有執行，這個平台學到了什麼**」。而且——這是本專案特有的重點——**我們的事件驅動路徑根本沒有用 checkpointer**（`orchestrator_runs` 取代了它），所以長期記憶**不能**照官方教學那樣掛在 `graph.compile(store=...)` 上，必須做成一個跟 `persistence/checkpointer.py` 平行的獨立元件，讓同步路徑、事件驅動路徑、以及 [agents/runtime.py](../agents/runtime.py) 的 HTTP agent runtime 都能用同一份記憶。
 
 ---
 
@@ -154,7 +154,7 @@ checkpoint_migrations (v)
 
 - 同步路徑：LangGraph node 直接呼叫（也可以順便掛 `compile(store=...)`，但那只是方便，不是必要）。
 - 事件驅動路徑：worker 的 handler 呼叫。
-- **`agents/*/server.py` 三個獨立 HTTP service：這才是真正的主戰場**——記憶要在 agent 內部被讀寫，而不是在編排層，否則換掉編排模式記憶就跟著消失。
+- **[agents/runtime.py](../agents/runtime.py) 的 HTTP agent runtime：這才是真正的主戰場**——記憶要在 agent 內部被讀寫，而不是在編排層，否則換掉編排模式記憶就跟著消失。這裡原先是三個獨立 server，後續已合併為單一 process 的三條 route。
 
 ---
 
@@ -162,7 +162,7 @@ checkpoint_migrations (v)
 
 ### 3.1 定位：這是平台能力，不是場景邏輯
 
-對照 [CLAUDE.md](../CLAUDE.md) 與 [docs/harness-engineering-principles.md](harness-engineering-principles.md) 檢查清單第 9 條：
+對照 [AGENTS.md](../AGENTS.md) 與 [docs/harness-engineering-principles.md](harness-engineering-principles.md) 檢查清單第 9 條：
 
 - **平台層**（放 `persistence/`、`gateway/`）：store backend、namespace 規約、讀寫 API、embedding 管道、存取治理、背景蒸餾器骨架。
 - **場景層**（放 `llm/`、`mcp_servers/*/agent.py`、`workflows/definitions/*.yaml`）：要記什麼（「台積電的別名」「這個收件人偏好 Slack」）、記憶怎麼進 prompt、蒸餾的判準。
@@ -267,7 +267,7 @@ principal 一樣取自 `current_node_name`（[persistence/call_log.py](../persis
 
 ### 3.5 embedding 走 LiteLLM Gateway，不要直接呼叫 provider
 
-`IndexConfig.embed` 接受 `Embeddings` 物件、model 字串、或**一個 callable**（`EmbeddingsFunc = Callable[[Sequence[str]], list[list[float]]]`，async 版是 `AEmbeddingsFunc`）。我們要用 callable，把它接到 [gateway/client.py](../gateway/client.py)，理由就是 CLAUDE.md 說的「AI 基礎建設要素件化、可替換」：
+`IndexConfig.embed` 接受 `Embeddings` 物件、model 字串、或**一個 callable**（`EmbeddingsFunc = Callable[[Sequence[str]], list[list[float]]]`，async 版是 `AEmbeddingsFunc`）。我們要用 callable，把它接到 [gateway/client.py](../gateway/client.py)，理由就是 [AGENTS.md](../AGENTS.md) 說的「AI 基礎建設要素件化、可替換」：
 
 - embedding 模型換 provider 時只改 `gateway/config.yaml`，不動記憶層。
 - 每一次 embedding 呼叫自動進 `call_log`（成本/延遲可觀測），跟 chat/STT 一致。
@@ -370,24 +370,24 @@ episodic 現在唯一的用途是「蒸餾器的原料」，不是「agent 的�
 |---|---|
 | [agents/envelope.py](../agents/envelope.py) | `AgentRequest` 新增 `context: dict = {}`（§3.3）；`run_handler()` 把它連同 `node_name` 一起傳給 handler |
 | [docs/agent-api-contract.md](agent-api-contract.md) | 修改：request envelope 加 `context` 欄位定義，補一段「為什麼 `thread_id` 不足以支撐長期記憶」 |
-| [agents/check/server.py](../agents/check/server.py) | `lifespan` 除了 `MCPGateway` 之外，再建一個長期存活的 store（跟 gateway 同理，不可 per-request 建立），掛在 `app.state.store` |
+| [agents/lifespan.py](../agents/lifespan.py) | runtime lifespan 除了 `MCPGateway` 之外，再建一個長期存活的 store（跟 gateway 同理，不可 per-request 建立），掛在 `app.state.store`；原先獨立的 `agents/check/server.py` 已合併 |
 | [agents/check/client.py](../agents/check/client.py)、`agents/{stt,notified}/client.py` | 帶上 `context`（先由呼叫端傳入，預設 `{"tenant_id": "default"}`） |
 | [llm/tsmc_judge.py](../llm/tsmc_judge.py) | 新增 optional `store` 參數（`None` 時行為完全不變，同步路徑不受影響）。在組 `messages` 前 `recall()`：procedural 記憶 append 到 `_SYSTEM_PROMPT` 後面、episodic 記憶轉成 few-shot 的 user/assistant 訊息對插在 `text` 之前;**別漏了 semantic**——公司別名（§3.6）也是這個 step 的記憶,`_lookup_tsmc_aliases()` 要把 `recall(MemoryKind.SEMANTIC, tenant=GLOBAL_TENANT, scope=("company","tsmc"))` 的結果併進 `mcp_servers/lookup` 那份靜態別名清單,不然 `remember()` 進去的別名修正永遠進不了那個決定性 backstop |
-| [agents/notified/server.py](../agents/notified/server.py)、[mcp_servers/notified/agent.py](../mcp_servers/notified/agent.py) | 同樣模式，`recall` semantic 記憶（收件人偏好管道）注入 prompt |
+| [agents/runtime.py](../agents/runtime.py)、[mcp_servers/notified/agent.py](../mcp_servers/notified/agent.py) | 同樣模式，`recall` semantic 記憶（收件人偏好管道）注入 prompt |
 
 **M2 完成的定義**：手動 `remember()` 塞一則規則進去，`check` agent 的行為確實改變，且 `parity_check.py` 仍通過。
 
 ### M2.1 — 記憶讀取端補完：共用 helper + `stt` 接上基礎設施（尚無 recall 呼叫）
 
-M2 落地後盤點發現兩個缺口：`agents/check/server.py`/`agents/notified/server.py` 的 `lifespan` 幾乎一字不差地各自手刻了一次「開 store、載 policy」，沒有共用；`agents/stt/server.py` 完全沒接記憶基礎設施——`policy.yaml` 沒有 `stt` 的 `memory:` entry、handler 的 `context` 參數直接丟棄。
+M2 落地後盤點發現兩個缺口：當時 `agents/check/server.py`/`agents/notified/server.py` 的 `lifespan` 幾乎一字不差地各自手刻了一次「開 store、載 policy」，沒有共用；當時的 `agents/stt/server.py` 完全沒接記憶基礎設施。這三個 server 後來已合併為 [agents/runtime.py](../agents/runtime.py) 與 [agents/lifespan.py](../agents/lifespan.py)。
 
 `stt` 目前確實沒有已知的記憶需求（轉錄不是判斷/決策類任務），但這不代表它永遠不會有——例如未來可能需要 procedural 記憶累積「某些專有名詞/公司內部代號要怎麼轉寫」這類修正規則。等真的有這個需求才回頭接基礎設施，會比現在就把「一個 agent 該怎麼接上記憶」變成平台共用的標準做法更貴。所以這一步只補基礎設施，不預先猜 `stt` 該記什麼：
 
 | 檔案 | 異動 |
 |---|---|
 | `persistence/memory_lifespan.py` | **新增**。`open_agent_memory(policy_path: str)`：async context manager，內部做 M2 每個 agent server 手刻的那幾行（`get_memory_store()` + `store.setup()` + `load_memory_policy()`），yield `(store, memory_policy)`。任何 `agents/<name>/server.py` 的 `lifespan` 只要一行就能接上——這是這份計畫第一次把「怎麼讓一個新 agent 用上 `recall()`/`remember()`」本身平台化，而不是每個 agent 各自複製貼上 |
-| [agents/check/server.py](../agents/check/server.py)、[agents/notified/server.py](../agents/notified/server.py) | 改用 `open_agent_memory()`，取代原本手刻的 `async with get_memory_store() as store: ...` + `load_memory_policy(...)` |
-| [agents/stt/server.py](../agents/stt/server.py) | `lifespan` 同樣接上 `open_agent_memory()`，`app.state.store`/`app.state.memory_policy` 補齊；handler 目前仍然不呼叫 `recall()`（`llm/stt_agent.py::transcribe()` 沒有 optional `store` 參數），純粹讓基礎設施就位 |
+| [agents/lifespan.py](../agents/lifespan.py) | runtime 統一改用 `open_agent_memory()`，取代原本各 server 手刻的 `async with get_memory_store() as store: ...` + `load_memory_policy(...)` |
+| [agents/runtime.py](../agents/runtime.py) | `stt` route 同樣取得共用 `app.state.store`/memory policy；當時先讓基礎設施就位，尚未呼叫 `recall()` |
 | [mcp_servers/policy.yaml](../mcp_servers/policy.yaml) | **不**幫 `stt` 加 `memory:` entry——還沒有具體要讀哪個 `kind`/`scope`，先讓它維持 fail-closed（`recall()` 之後真的被呼叫也只會拿到空清單，不會報錯，見 `persistence/memory_smoke_test.py` 的 `policy_denial` 案例）。等哪天真的定義出 `stt` 該記什麼，才需要開 grant |
 
 **M2.1 完成的定義**：三個 agent server 的 `lifespan` 都用同一個 helper 開 store/policy，`check`/`notified` 行為不變（`parity_check.py` 仍通過）；`stt` 的 `app.state.store` 存在但沒有任何呼叫端使用它。
@@ -402,7 +402,7 @@ M2.1 補的是「怎麼開 store」，這一步補「開了 store 之後怎麼�
 | [llm/tsmc_judge.py](../llm/tsmc_judge.py) | 拿掉 `_recall_system_prompt_and_few_shot`，改呼叫上面兩個平台函式；episodic 的 `content` schema 從 `{"transcript", "mentions_tsmc"}`（check 專屬命名）改成標準的 `{"input", "output"}`（`output` 存 `json.dumps({"mentions_tsmc": ...})` 這個完整字串，序列化決定留在寫入端） |
 | [mcp_servers/notified/agent.py](../mcp_servers/notified/agent.py) | `_recall_system_prompt` 改名 `_recall_prompt_and_few_shot`，一樣呼叫 `inject_procedural`/`recall_episodic_few_shot`（`notified` 目前沒有這兩個 kind 的 `memory:` grant，呼叫了也是 no-op，但腿接上了）；收件人偏好（semantic）維持自己的邏輯不變，因為 §3.2 講的標準化不適用 semantic |
 | [llm/stt_agent.py](../llm/stt_agent.py) | 同樣模式接上兩個平台函式，`transcribe()` 新增 optional `store`/`memory_policy`/`tenant` 參數。**已知形狀落差要記下來**：`recall_episodic_few_shot` 假設「一組 user/assistant 文字」就是完整的正確答案，但 `stt` 這個迴圈的正確答案其實是一串 tool call（見模組 docstring：逐字稿是從工具結果撈的，不是模型自己的回覆）——現在因為沒有 grant、呼叫了也是空清單，這個形狀落差不會造成問題，但真的要給 `stt` 開 episodic 記憶時，這個假設要重新想過，不是加資料就好 |
-| [agents/stt/server.py](../agents/stt/server.py) | handler 不再丟棄 `context`，改把 `app.state.store`/`app.state.memory_policy`/`context.tenant_id` 傳進 `transcribe()` |
+| [agents/runtime.py](../agents/runtime.py) | `stt` handler 不再丟棄 `context`，改把共用 store/memory policy/`context.tenant_id` 傳進 `transcribe()` |
 | `persistence/memory_smoke_test.py` | `scenario_prefix_scope` 的 episodic 範例內容跟著改成 `{"input", "output"}`，避免文件跟程式碼對不上 |
 
 **M2.2 完成的定義**：`check`/`notified`/`stt` 三個 agent 的 `_run_*_loop` 都呼叫同一組 `persistence/memory_prompt.py` 函式；`check` 用真實服務重新驗證過一次（同一句「晶圆代工龙头」測試句，塞記憶／拿掉記憶行為仍然反轉，`call_log` 也確認新 schema 的 few-shot 真的送進了模型）；`stt`/`notified` 的 procedural/episodic 呼叫因為沒有 `policy.yaml` grant，實際跑起來是 no-op，但程式碼路徑已經跟 `check` 一致。
@@ -416,7 +416,7 @@ M2.1 補的是「怎麼開 store」，這一步補「開了 store 之後怎麼�
 | `orchestrator/memory_writer.py` | **新增**。`run_memory_writer(bus, workflow_def, store, memory_policy, *, worker_id)`：訂閱 `events_topic`、consumer_group `{name}.memory_writer`，逐事件蒸餾後 `remember()`，最後 `ack()`。**蒸餾規則本身不寫在這裡**，只依 `StepDef.memory_write` 宣告執行——引擎保持 workflow-agnostic，跟 `master_agent.py` 是純 interpreter 的設計一致。只處理 `status: "ok"` 的完成事件；`needs_review`/`error` 沒有「確定正確」的 output,直接跳過（見下方 HITL 缺口） |
 | [orchestrator/workflow_def.py](../orchestrator/workflow_def.py) | `StepDef` 新增 optional `memory_write: tuple[MemoryWriteRule, ...]`（YAML 底下寫成 `memory: {write: [...]}`）。**跟原計畫的差別**：只做了 `write` 這一半——`read` 那一半在 M2.2 已經用另一條路徑（`persistence/memory_prompt.py` 直接被 `llm/tsmc_judge.py` 呼叫）解決掉了，不需要在這裡重複宣告一次。`kind` 目前只接受 `"episodic"`（`input_field`/`output_fields` 這組欄位是 episodic `{"input","output"}` 標準 schema 專用的形狀,procedural/semantic 沒有消費者、沒有定案的規則形狀前不硬做) |
 | [workflows/definitions/stt_check_notify.yaml](../workflows/definitions/stt_check_notify.yaml) | 只在 `check` step 加 `memory: {write: [{kind: episodic, input_field: transcript, output_fields: [mentions_tsmc]}]}`——這就是未來 no-code UI 要生成的東西，等於提前驗證了介面。`stt`/`notified` 這次不加（跟 M2.2 對這兩個 agent 保持 no-op 是同一個態度） |
-| [workflows/event_driven_pipeline.py](../workflows/event_driven_pipeline.py) | 新增 `--role memory-writer`，用跟 `agents/check/server.py` 完全同一個 `persistence/memory_lifespan.py::open_agent_memory()` 開長駐 store |
+| [workflows/event_driven_pipeline.py](../workflows/event_driven_pipeline.py) | 新增 `--role memory-writer`，用跟 [agents/lifespan.py](../agents/lifespan.py) 相同的 `persistence/memory_lifespan.py::open_agent_memory()` 開長駐 store |
 | [Procfile.workers](../Procfile.workers) | 加一行 `memory-writer:`（跟 master/worker 同一批長駐 process，不是 `Procfile` 那批常駐服務） |
 | [orchestrator/smoke_test.py](../orchestrator/smoke_test.py) | 新增 `scenario_memory_writer_distills_episodic`（真實 stt→check→notified 全鏈路 + memory_writer 一起跑，斷言 `check` 的成功判斷確實蒸餾成 episodic 記憶,且跟 `llm/tsmc_judge.py` 讀取端用的是同一個 scope）與 `scenario_memory_writer_skips_needs_review`（`check` 回 `needs_review` 時確認沒有記憶被寫入) |
 
@@ -452,7 +452,7 @@ M2.1 補的是「怎麼開 store」，這一步補「開了 store 之後怎麼�
 | [mcp_servers/tool_errors.py](../mcp_servers/tool_errors.py) | `guarded_tool` 原本只包同步工具函式；`recall_semantic_memory` 要 `await recall()`,所以擴充成偵測 `inspect.iscoroutinefunction`,同時支援 sync/async 兩種 `@mcp.tool()` |
 | 驗證 | 手動跑過一次真實服務全鏈路（`persistence/memory.py::remember()` 塞一則收件人偏好 → 透過真的 `MCPGateway`/`gemini-cheap` 跑 `decide_and_notify()`）：模型主動呼叫了 `memory__recall_semantic_memory`,查到偏好後正確改用 Gmail（不是 Slack）,2 輪內完成,沒有觸發 `StallGuard`——`MAX_TURNS=20` 多開一個工具沒有讓 stall 機率有感上升 |
 
-**沒在原計畫表格裡、但落地時才發現必須解決的架構缺口**：`mcp_servers/memory/server.py` 是 `MCPGateway.connect()` 用 `uv run python -m ...` 起的獨立 subprocess，`persistence/call_log.py` 的 `current_node_name` 是 process-local 的 `ContextVar`，過不了 stdio 這道 process 邊界——不處理的話,`recall()` 在這個 subprocess 裡讀到的 principal 永遠是 `None`,`memory_policy.py::can_read()` 永遠 fail closed,新工具永遠查不到東西（不是安全漏洞,是功能整個失效）。修法：[mcp_servers/gateway.py](../mcp_servers/gateway.py) 的 `MCPGateway.__init__` 新增 optional `principal` 參數,`connect()` 透過 `StdioServerParameters(env=...)` 把它寫進子行程環境變數（`agents/notified/server.py` 建構 gateway 時傳 `principal="notified"`——這個身分對這顆 agent server 的整個生命週期是常數,不需要每次呼叫都重新傳）,`mcp_servers/memory/server.py` 啟動時讀那個環境變數、`current_node_name.set()` 一次。這個修正跟 `memory:` 區塊怎麼設計無關,純粹是讓既有機制在「recall() 被包成 MCP tool」這個新場景下能正確運作,但任何未來想這麼做的人都要知道這件事——詳見 [TODO.md](../TODO.md) 的 `memory-policy-pending` 小節。
+**沒在原計畫表格裡、但落地時才發現必須解決的架構缺口**：`mcp_servers/memory/server.py` 是 `MCPGateway.connect()` 用 `uv run python -m ...` 起的獨立 subprocess，`persistence/call_log.py` 的 `current_node_name` 是 process-local 的 `ContextVar`，過不了 stdio 這道 process 邊界——不處理的話,`recall()` 在這個 subprocess 裡讀到的 principal 永遠是 `None`,`memory_policy.py::can_read()` 永遠 fail closed,新工具永遠查不到東西（不是安全漏洞,是功能整個失效）。修法：[mcp_servers/gateway.py](../mcp_servers/gateway.py) 的 `MCPGateway.__init__` 新增 optional `principal` 參數,`connect()` 透過 `StdioServerParameters(env=...)` 把它寫進子行程環境變數（現由 [agents/lifespan.py](../agents/lifespan.py) 依 step name 建構 gateway 並固定 principal）,`mcp_servers/memory/server.py` 啟動時讀那個環境變數、`current_node_name.set()` 一次。這個修正跟 `memory:` 區塊怎麼設計無關,純粹是讓既有機制在「recall() 被包成 MCP tool」這個新場景下能正確運作,但任何未來想這麼做的人都要知道這件事。
 
 > ⚠️ **權限模型刻意簡化,不是忘了做**：這個工具同時要過兩層檢查——`mcp_servers/policy.yaml` 的 `principals:`/`roles:`（能不能呼叫這個工具）和 `memory:` 區塊（呼叫之後能不能讀到那個 namespace）。**這一版先不做任何通用化的雙層一致性檢查機制,兩個地方的 grant 都手動寫死在 `policy.yaml` 裡**，因為完整的存取治理模型還沒跟主管定案(見 §3.4 跟 [TODO.md](../TODO.md) 的 `memory-policy-pending`)，值得投資做一個通用機制之前，這個懸而未決的前提要先解決。這是刻意的短期簡化，不是遺漏——詳細追蹤記在 TODO.md。
 

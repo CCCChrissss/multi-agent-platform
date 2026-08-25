@@ -11,7 +11,7 @@
 5. 在 [workflows/event_driven_pipeline.py](../workflows/event_driven_pipeline.py) 的 `build_step_handlers()` 加一段膠水
 6. 在 workflow YAML 加一個 step
 
-這六件事裡，只有第 6 件是「宣告」，其他五件都是「開發」。**這就是「三支寫死的服務」跟「平台」的分界線**——[CLAUDE.md](../CLAUDE.md) 講的 no-code/low-code 搭建，在這個結構下不可能達成。
+這六件事裡，只有第 6 件是「宣告」，其他五件都是「開發」。**這就是「三支寫死的服務」跟「平台」的分界線**——[AGENTS.md](../AGENTS.md) 講的 no-code/low-code 搭建，在這個結構下不可能達成。
 
 理想的樣子是：**agent 本身沒有身分**，它是一個泛用的 tool-calling runtime，掛上「模型 + MCP 工具 + 記憶 + prompt + 輸入輸出契約」之後才「變成」stt 或 notified。改掛的東西，stt 就變成 notified。
 
@@ -302,6 +302,11 @@ MCP 子行程總數沒有變少（一樣 15 個：3 個 agent × 5 個 server，
 
 ### 落地結果：只做到互動原型，還沒接後端
 
+> **後續狀態更新**：以下記錄的是當時的歷史階段。現在 repository 內已有
+> [demo/index.html](../demo/index.html) 與 [demo/api.py](../demo/api.py) 的正式可追蹤實作；
+> 目前整合邊界見 [ui-backend-integration-plan.md](ui-backend-integration-plan.md)。外部 Claude
+> artifact 只保留為設計來源，不再是現行實作或唯一可用介面。
+
 三條完成標準都在一個 Claude artifact——[Agent 平台 Demo 介面原型](https://claude.ai/code/artifact/8049a95b-09da-4fa9-b6f4-c42a1f8e5e29?org=d32aa613-84a7-4f98-b2da-e857e8831578)（純前端 HTML/CSS/JS，掛在使用者自己的 claude.ai/code 帳號底下，不在這個 repo 裡，畫面右上角自己標了「原型 · 資料全為假」）——驗證過設計可不可行：每個 agent 卡片右側的「輸入/輸出」分頁最上面有「建議欄位（依掛載工具）」區塊，只列目前開啟的工具，每個建議欄位都有「+ 加進輸入／輸出」按鈕；每個既有欄位旁邊有來源標籤（工具建議 vs 手動宣告）跟移除鈕；建議區塊跟輸入來源對應在同一個畫面，加了欄位馬上能選來源。刻意留了幾個「建議了但沒被採用」的例子（例如 `browse_semantic_memory` 的 `scope` 沒被加進 `check` 的輸入），示範「建議 ≠ 決定」這件事。
 
 **這是設計驗證，不是可以上線的功能**，跟真正落地還差這幾層：
@@ -477,4 +482,4 @@ UI 上要「同一張 agent 卡片看到 model/tools/memory」不代表資料要
 
 建議 **P5 → P7 → P6**：P5 小且獨立、P6 依賴它（通用 dispatch 要讀 `step.model`）；P7 完全獨立、風險低，可以插在中間先做掉。**三者都已照這個順序完成並 commit**（P5/P7/P6 各自的「落地結果」小節記錄了實際範圍與跟原計畫的差異）——**但都還沒用真實 stack（ollama + litellm + honcho）跑過 `orchestrator.smoke_test`/`workflows.parity_check`/`persistence.memory_smoke_test`**，目前只做到靜態驗證（載入時驗證、單元層級檢查、`harness/generic_agent_smoke_test.py` 跑到打真實 LLM 之前的每一步）。正式視為完成前，這是下一步要做的事，`stt` 遷移到通用路徑那個已知行為差異（見 P6「落地結果」）優先權最高。
 
-P4（UI 原型）本身已經做完，不是待辦——[Agent 平台 Demo 介面原型](https://claude.ai/code/artifact/8049a95b-09da-4fa9-b6f4-c42a1f8e5e29?org=d32aa613-84a7-4f98-b2da-e857e8831578)已經驗證過三條完成標準。**接後端這件事刻意不排進這份文件、也不算 P8**：使用者要先把這個原型本身確認沒問題，之後才會另外開一個獨立的工作計畫做後端串接（讀寫真正的 `WorkflowDef`／`policy.yaml`）。P5–P7 做完後，`output`/`model` 都變成 YAML 欄位，屆時原型要接的 schema 才算定型——這是接後端那個未來計畫該處理的事，不在這裡展開。
+P4 當時先以 [Agent 平台 Demo 介面原型](https://claude.ai/code/artifact/8049a95b-09da-4fa9-b6f4-c42a1f8e5e29?org=d32aa613-84a7-4f98-b2da-e857e8831578) 驗證三條完成標準；該連結現在只作歷史來源。後續後端串接已落在 repository 的 [demo/index.html](../demo/index.html)、[demo/api.py](../demo/api.py)、[demo/spec_writer.py](../demo/spec_writer.py) 與 [agents/live_spec.py](../agents/live_spec.py)，現行契約由 [ui-backend-integration-plan.md](ui-backend-integration-plan.md) 接手。

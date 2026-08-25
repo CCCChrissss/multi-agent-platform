@@ -8,6 +8,7 @@ __pycache__/
 playground/
 graphify-out/
 .claude/
+.codex-log/
 保單條款.pdf
 
 # UI-built agents (demo/spec_writer.py::create_agent(), docs/ui-backend-integration-plan.md P2) --

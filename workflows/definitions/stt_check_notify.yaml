@@ -65,7 +65,7 @@ steps:
       properties:
         mentions_tsmc: {type: boolean}
         # should_notify/subject/body are optional here (not required) so
-        # agents/check/server.py -- the generic "does this mention TSMC"
+        # agents/runtime.py's check route -- the generic "does this mention TSMC"
         # HTTP contract, unchanged by docs/exclusion-scenario-plan.md P0 --
         # still validates with just {mentions_tsmc}. The event-driven path's
         # scenario glue (workflows/event_driven_pipeline.py's check_handler)
@@ -112,7 +112,7 @@ steps:
         body: {type: string}
       additionalProperties: false
     # recipient_id isn't part of this step's input_schema (it comes from
-    # request context, see agents/notified/server.py) -- llm/notify_agent.py
+    # request context, see agents/runtime.py) -- llm/notify_agent.py
     # still threads it into the user message itself, outside this template.
     prompt:
       system: |-

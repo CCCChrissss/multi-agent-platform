@@ -2,7 +2,7 @@
 
 ## Context
 
-主管提到過去的 agent 專案實務上都會把 agent 做成 API,雖然目前這個平台沒有指定要解決哪個具體痛點,但背後的通用理由(團隊邊界清楚、語言/框架無關、獨立部署擴展、治理與可觀測性集中化)跟 CLAUDE.md 的平台目標(通用、可替換、為 no-code 組裝鋪路)是一致的。
+主管提到過去的 agent 專案實務上都會把 agent 做成 API,雖然目前這個平台沒有指定要解決哪個具體痛點,但背後的通用理由(團隊邊界清楚、語言/框架無關、獨立部署擴展、治理與可觀測性集中化)跟 [AGENTS.md](../AGENTS.md) 的平台目標(通用、可替換、為 no-code 組裝鋪路)是一致的。
 
 這份文件定義「agent 的 API 合約長什麼樣子」,範圍是現有全部 3 個 agent(`stt`/`check`/`notified`),不分先後全部套用同一份規格。**這不是決定要把它們拆成獨立 HTTP service**——合約本身刻意跟傳輸層(Python function call / event_bus Event / 未來的 HTTP)脫鉤,不管以後用哪種方式呼叫,agent 收/還的資料形狀都是同一份,不用因為換傳輸層重寫一次規格。
 
@@ -113,18 +113,20 @@ Response envelope:
 
 **驗證**:改完後跑過 `event_bus/smoke_test.py`(M0)、`orchestrator/smoke_test.py`(M2-M5)、`workflows/parity_check.py`(M6),全數通過。
 
-### 後續:把三個 agent 真的包成獨立 HTTP service
+### 歷史階段：把三個 agent 包成 HTTP service（後續已合併 runtime）
 
-上面落地的是 event-driven 路徑的 envelope 邏輯;之後進一步把 `stt`/`check`/`notified` 三個 agent 本身也包成獨立 HTTP service(不再是同一個 worker process 直接 import 呼叫),異動如下:
+上面落地的是 event-driven 路徑的 envelope 邏輯；當時先把 `stt`/`check`/`notified`
+包成三個獨立 HTTP service。後續 generic runtime 已將 server 合併為單一 process 的三條 route，
+client/envelope 合約保持不變。下表以現行路徑標示：
 
 | 檔案 | 異動 |
 |---|---|
 | `agents/envelope.py` | 新增,`AgentRequest`/`AgentResponse` pydantic model + `run_handler()`——跟 `orchestrator/worker.py` 的 `_handle_one()` 平行實作同一套三段式分類,故意不共用 import(`agents/` 要能獨立部署,不該拉進 `orchestrator/` 的依賴鏈) |
-| `agents/{stt,check,notified}/server.py` | 新增,各自一個 FastAPI app,`lifespan` 建立長期存活的 `MCPGateway`,`POST /run` 收 `AgentRequest`、呼叫原本的 agent function(`llm/stt_agent.py` 等,原地不動)、回傳 `AgentResponse` |
+| [agents/runtime.py](../agents/runtime.py)、[agents/lifespan.py](../agents/lifespan.py) | 單一 FastAPI app 提供 `POST /{step_name}/run`；共用 lifespan 管理長期存活的 store，並依 step 建立 `MCPGateway` |
 | `agents/{stt,check,notified}/client.py` | 新增,比照 `services/notified/client.py` 的 `httpx` + `ToolDependencyError` 慣例,把 response envelope 轉回舊有呼叫慣例(成功回傳業務欄位、`needs_review` 轉成 `raise AgentLoopIncomplete`、`error` 轉成 `raise RuntimeError`),讓上層呼叫端不用感知傳輸層換了 |
 | [workflows/event_driven_pipeline.py](../workflows/event_driven_pipeline.py) | 三個 handler 改呼叫 `agents/*/client.py`;`build_step_handlers()` 拿掉 `gateway` 參數;worker process 不再需要自己建 `MCPGateway` |
 | [orchestrator/smoke_test.py](../orchestrator/smoke_test.py)、[workflows/parity_check.py](../workflows/parity_check.py) | 事件驅動路徑的呼叫點跟著拿掉 `gateway` 參數;`parity_check.py` 的同步路徑仍保留 `MCPGateway`,因為 `workflows/simple_pipeline.py` 還是需要 in-process gateway |
-| [Procfile](../Procfile) | 新增 `stt-agent`/`check-agent`/`notified-agent` 三行(port 8003/8004/8005) |
+| [Procfile](../Procfile) | 現行只啟動一個 `agents` process（port 8003），由 runtime 提供三條 route |
 
 `orchestrator/worker.py`、`orchestrator/master_agent.py` 完全沒有變動——這正是 envelope 設計成 transport-agnostic 的目的:換傳輸層只動 handler 內部的呼叫方式，不動 envelope 邏輯本身。
 
@@ -133,7 +135,7 @@ Response envelope:
 | 檔案 | 異動 |
 |---|---|
 | `agents/envelope.py` | `AgentRequest` 新增 `context: dict`(預設 `{}`);`Handler` 型別從 `Callable[[dict], Awaitable[dict]]` 改成 `Callable[[dict, dict], Awaitable[dict]]`;`run_handler()` 把 `request.context` 一併傳給 handler |
-| `agents/{stt,check,notified}/server.py` | 三個 `_handler` 簽章補上 `context` 參數;`check`/`notified` 的 `lifespan` 各自多開一個長期存活的 `AsyncPostgresStore`(`persistence/memory_store.py`)掛在 `app.state.store`,並載入 `persistence/memory_policy.py` 的 `memory_policy` 掛在 `app.state.memory_policy`;`stt` 只是配合共用簽章接受 `context`,直接丟棄不用 |
+| [agents/runtime.py](../agents/runtime.py)、[agents/lifespan.py](../agents/lifespan.py) | 三條 route 都接收 `context`；runtime 共用一個長期存活的 `AsyncPostgresStore`，memory policy 由 live spec 載入 |
 | [llm/tsmc_judge.py](../llm/tsmc_judge.py) | `mentions_tsmc()` 新增 optional `store`/`memory_policy`/`tenant` 參數(全部不傳時行為與改動前逐位元組相同,`workflows/simple_pipeline.py` 因此不受影響);組 messages 前呼叫 `persistence/memory.py` 的 `recall()`,procedural 記憶接在 system prompt 後面,episodic 記憶轉成 few-shot 訊息對插在使用者輸入之前;`_lookup_tsmc_aliases()` 額外 `recall()` semantic 記憶(`GLOBAL_TENANT`/`("company","tsmc")`),跟 `mcp_servers/lookup` 的靜態別名清單合併餵給確定性 alias backstop |
 | [mcp_servers/notified/agent.py](../mcp_servers/notified/agent.py) | `decide_and_notify()` 同樣模式新增 optional 參數,外加 `recipient_id`;`recall()` 該收件人的 `semantic` 通知管道偏好注入 system prompt |
 | `agents/{stt,check,notified}/client.py` | 公開函式與 `_run()` 都新增 optional `context: dict \| None = None`;未傳入時預設 `{"tenant_id": "default"}` |

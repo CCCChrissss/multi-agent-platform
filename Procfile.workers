@@ -20,8 +20,8 @@
 # 三個 step 各自一個 process（註解掉的寫法）vs. 一個 process 跑全部 step
 # （worker-all，下面啟用的寫法）：topic/consumer_group/搶單完全不變，純粹是連線數
 # 換 blast radius 的取捨——worker-all 少開幾條連線，但一掛三個 step 一起停。
-# 2026-08-04 切換成 worker-all：docs/event-bus-connection-reduction-plan.md
-# 補充章節實測過，同樣接上 memory-writer 時 worker-all 比三個獨立 process 省
+# 2026-08-04 切換成 worker-all：docs/event-driven-multi-agent-coordination-plan.md
+# 的「連線數實測」補充章節；同樣接上 memory-writer 時，worker-all 比三個獨立 process 省
 # 5 條常駐連線（17 -> 12）。之後要單獨擴充某個瓶頸 step 時，兩種寫法可以並存：
 # 跟 worker-all 一起再起一個單 step process，SKIP LOCKED 會自動分工，不會
 # 重複處理同一則命令。

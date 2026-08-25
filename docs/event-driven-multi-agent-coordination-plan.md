@@ -6,7 +6,7 @@
 
 依照 Figma 架構圖（Outer Structure → Multi-agent Coordination）的規劃，平台要新增一種**事件驅動的多 agent 協作模式**：Master Agent 透過 Event Bus（圖上標註「ex. Apache Kafka, DB」）發布任務命令，Worker Nodes 訂閱命令、執行、再發布完成事件回去，Master Agent 訂閱事件追蹤整體進度。
 
-這不是要取代現有的示範 pipeline，而是要新增一條**平行的執行路徑**——因為專案目標是通用的 no-code/low-code 多 agent 平台（見 CLAUDE.md），Event Bus、Master Agent、Worker 協調機制都要做成平台通用能力（放基礎建設層），STT/Check/Notified 這條序列本身則要做成「設定」而非寫死在協調邏輯裡，這樣未來才可能給非工程背景使用者透過 UI 組裝別的 workflow。
+這不是要取代現有的示範 pipeline，而是要新增一條**平行的執行路徑**——因為專案目標是通用的 no-code/low-code 多 agent 平台（見 [AGENTS.md](../AGENTS.md)），Event Bus、Master Agent、Worker 協調機制都要做成平台通用能力（放基礎建設層），STT/Check/Notified 這條序列本身則要做成「設定」而非寫死在協調邏輯裡，這樣未來才可能給非工程背景使用者透過 UI 組裝別的 workflow。
 
 已確認的兩個方向決策：
 1. **Event Bus 第一階段用 DB-backed（Postgres）**，但先定義好通用的 `EventBus` 介面，之後才能無痛加 Kafka backend（比照 `persistence/checkpointer.py`「一個 factory function 藏住 backend」的既有模式）。
@@ -144,3 +144,16 @@ CREATE TABLE event_dispatch (
 - M2–M5：手動/腳本化注入合成事件，直接檢查 `event_log`/`event_dispatch`/`call_log`（或延伸後的 `persistence/history.py`）。
 - M5：`kill -9` worker 驗證 reclaim；手動重複發布同一命令驗證不會重複寄信。
 - M6：寫一支小型 parity script，同輸入跑兩種模式並 diff 輸出與 `call_log` 形狀，作為「事件驅動模式是真正平行路徑、不是分岔重寫」的長期回歸防線。
+
+## 落地補充：worker-all 連線數實測
+
+2026-08-04 將三個獨立 step worker 合併為 [Procfile.workers](../Procfile.workers) 的
+`worker-all`。Topic、consumer group 與 `SKIP LOCKED` 認領語意沒有改變；取捨是用較小的
+常駐連線數交換較大的故障範圍（單一 worker-all 中止時三個 step 同時暫停）。
+
+在同樣啟動 `master`、三個 step 與 `memory-writer` 的條件下，當時實測常駐連線由 17
+降為 12，節省 5 條。需要單獨擴充某個瓶頸 step 時，可以在 `worker-all` 之外再啟動
+單 step worker；competing-consumer 與 `SKIP LOCKED` 仍會分工，不應重複處理同一命令。
+
+這是特定版本與啟動組合的歷史量測，不是永久容量保證。修改 process 拓撲或連線池後，
+必須重新量測再更新數字。

@@ -65,10 +65,9 @@ class MCPGateway:
         # A server subprocess can't read current_node_name -- that's a
         # ContextVar, scoped to this process, not the child it spawns over
         # stdio. But the identity of "which agent owns this gateway" is a
-        # fixed fact for the whole process lifetime (agents/notified/server.py
-        # always calls run_handler("notified", ...), never any other node
-        # name), so it's passed down once here rather than needing to cross
-        # the process boundary per-call. Only a server whose tools need to
+        # fixed fact for a gateway's lifetime (agents/lifespan.py creates one
+        # gateway per step name), so it's passed down once here rather than
+        # needing to cross the process boundary per-call. Only a server whose tools need to
         # know the calling principal (mcp_servers/memory/server.py, so it can
         # enforce persistence/memory_policy.py's can_read()) actually reads
         # this env var -- every other server ignores it.

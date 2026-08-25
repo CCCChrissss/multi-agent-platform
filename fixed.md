@@ -148,7 +148,7 @@
 
 **修法**：在 envelope 加第三個 top-level 欄位 `context: dict`（預設 `{}`），承載 `tenant_id`/`user_id` 這類跨 run 的身分維度，跟 `input`（本次業務資料）分開。`thread_id`（這一次）對 `context`（跨越很多次）的關係，對應 checkpointer 對 store 的關係往上搬一層。
 
-**驗證**：[agents/envelope.py](agents/envelope.py) 的 `AgentRequest` 已有 `context: dict` 欄位；`agents/check/server.py`、`agents/notified/server.py` 都讀 `context.get("tenant_id", "default")` 決定記憶 namespace 的 tenant。動到的檔案見 [docs/long-term-memory-plan.md](docs/long-term-memory-plan.md) 的 M2。
+**驗證**：[agents/envelope.py](agents/envelope.py) 的 `AgentRequest` 已有 `context: dict` 欄位；合併後的 [agents/runtime.py](agents/runtime.py) 各 route 都讀 `context.get("tenant_id", "default")` 決定記憶 namespace 的 tenant。動到的檔案見 [docs/long-term-memory-plan.md](docs/long-term-memory-plan.md) 的 M2。
 
 <a id="browse-traversal-state"></a>
 ### `browse()` 的多輪鑽取沒有維護一份確定性的「已探索路徑」狀態，回溯完全靠模型自己重讀 messages 拼湊

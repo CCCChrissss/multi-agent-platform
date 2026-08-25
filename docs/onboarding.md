@@ -26,4 +26,4 @@
 8. **MCP 路由 + RBAC** — [mcp_servers/gateway.py](../mcp_servers/gateway.py)`::MCPGateway.call_tool()`，對照 [mcp_servers/policy.yaml](../mcp_servers/policy.yaml)
    落到實際的 [mcp_servers/stt/server.py](../mcp_servers/stt/) → [services/stt/breeze_asr.py](../services/stt/breeze_asr.py)。
 
-這八步覆蓋 README「分層架構」圖的全部六層。追完之後再讀 [CLAUDE.md](../CLAUDE.md)（為什麼）和 [harness-engineering-principles.md](harness-engineering-principles.md)（動手前的規矩），補「為什麼這樣設計」。
+這八步覆蓋 README「分層架構」圖的全部六層。追完之後再讀 [AGENTS.md](../AGENTS.md)（為什麼）和 [harness-engineering-principles.md](harness-engineering-principles.md)（動手前的規矩），補「為什麼這樣設計」。

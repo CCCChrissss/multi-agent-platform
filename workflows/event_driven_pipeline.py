@@ -78,7 +78,7 @@ def build_step_handlers(workflow_def: WorkflowDef) -> dict[str, Handler]:
 
     # ponytail: "should_notify = mentions_tsmc, subject = a fixed TSMC string"
     # is the one bit of TSMC-specific scenario logic left in this path --
-    # it can't live in agents/check/server.py (that HTTP contract stays the
+    # it can't live in agents/runtime.py's check route (that HTTP contract stays the
     # generic "does this mention TSMC" judgment, unchanged) or in
     # llm/notify_agent.py (deliberately scenario-agnostic, see its module
     # docstring), so it lives here, in the file whose own docstring already

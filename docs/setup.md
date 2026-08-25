@@ -1,5 +1,8 @@
 # 安裝疑難排解
 
+根目錄 README 的主要安裝指令以 macOS / Bash 為例；Windows / PowerShell 請先看
+[windows-setup.md](windows-setup.md)，再回到本文件依錯誤類型排查。
+
 [README 的「從零開始安裝」](../README.md#從零開始安裝)是happy path，這份收的是實際會卡住的地方。
 
 ## pgvector

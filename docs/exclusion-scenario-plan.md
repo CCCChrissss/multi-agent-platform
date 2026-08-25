@@ -18,7 +18,7 @@
 寫入端**這次不做設計**——一次性 seed script 灌進去就好（P3）。
 
 順帶處理一個盤點時發現的架構缺陷：`notified` agent 現在收 `mentions_tsmc: bool`，
-還把「提到台積電就用 Gmail」寫死在 prompt 裡——場景邏輯滲進了通用元件（違反 [CLAUDE.md](../CLAUDE.md)）。
+還把「提到台積電就用 Gmail」寫死在 prompt 裡——場景邏輯滲進了通用元件（違反 [AGENTS.md](../AGENTS.md)）。
 不修的話這次只是把同一個錯誤換一個場景重犯，所以列為 P0。
 
 ---
@@ -329,7 +329,7 @@ import 改幾行而已。
 |---|---|---|
 | `llm/notify_agent.py` | **新增（搬移）** | 從 [mcp_servers/notified/agent.py](../mcp_servers/notified/agent.py) 整檔搬過來。簽名改成 `decide_and_notify(gateway, *, should_notify, subject, body, recipient_id, store=None, memory_policy=None, tenant="default")`；`_finish(should_notify, notified_ok, log)`；`_SYSTEM_PROMPT` 拿掉台積電那句，改成「依收件人偏好選管道（`recall_semantic_memory`，scope=`["recipient", id]`），查不到用預設 Gmail」。procedural/episodic 的強制注入不動 |
 | `mcp_servers/notified/agent.py` | **刪除** | |
-| [agents/notified/server.py](../agents/notified/server.py) | 修改 | import 改指向 `llm/notify_agent.py`；handler 從 input 取新欄位 |
+| [agents/runtime.py](../agents/runtime.py) | 修改 | `notified` route 改呼叫 `llm/notify_agent.py`；handler 從 input 取新欄位（原先的獨立 `agents/notified/server.py` 已合併） |
 | [workflows/simple_pipeline.py](../workflows/simple_pipeline.py) | **不動** | 它 import 的是 `mcp_servers.notified.agent`——⚠️ 這個檔被 `parity_check.py` 凍結，**搬家會撞到**。做法：`mcp_servers/notified/agent.py` 保留成一行 re-export（`from llm.notify_agent import decide_and_notify`），凍結檔的 import path 不變。凍結檔的 `notified_node` 仍傳舊參數 → 所以 re-export 那層要留一個相容 shim 處理 `mentions_tsmc` → `should_notify` 的轉換。**這是舊場景的場景邏輯，正確的歸屬地就是那個 shim**，不算沒清乾淨 |
 | [workflows/definitions/stt_check_notify.yaml](../workflows/definitions/stt_check_notify.yaml) | 修改 | `notified` 的 input_schema：`mentions_tsmc` → `should_notify`/`subject`/`body`。舊 workflow 的 `check` step 要跟著多輸出這三個欄位（`llm/tsmc_judge.py` 回傳值包一層，不動判斷邏輯） |
 
@@ -353,7 +353,7 @@ import 改幾行而已。
 |---|---|---|
 | [mcp_servers/memory/server.py](../mcp_servers/memory/server.py) | 修改 | 新增 `@mcp.tool() async def browse_semantic_memory(scope: list[str] \| None = None) -> str`。`scope` 空 → 從該 tenant 的 semantic 根開始。**docstring 是這個機制唯一的操作說明，寫壞了整套失效**，必須明講三件事：①這是目錄不是內容，看到想要的子目錄就再 call 一次帶上它；②葉節點會直接給內容；③這層沒有你要的就用 `parent` 退回上一層看 `siblings`，**不要用猜的回答**。既有的 `recall_semantic_memory` 完全不動 |
 | [mcp_servers/policy.yaml](../mcp_servers/policy.yaml) | 修改 | `principals.check` → `{roles: [reader], allow: ["memory__browse_semantic_memory"]}`（比照 M4.5 給 `notified` 開 tool 的做法，一個 principal 不值得開新 role）；`memory.check.read` 加一條 `"_global/semantic/insurance_product/*"`，既有三條保留 |
-| [agents/check/server.py](../agents/check/server.py) | 修改 | `make_lifespan("check")` 補 `principal="check"`。該檔 L14 的 ponytail 註解本來就寫「check 哪天有了 memory tool 就要補這個」——**現在就是那天**。不補的話 M4.5 那個 `MCP_CALLING_PRINCIPAL` 傳不下去，subprocess 裡的 principal 是 `None`，靜默 fail-closed 查無資料 |
+| [agents/lifespan.py](../agents/lifespan.py) | 修改 | 建立 `check` 的 `MCPGateway` 時傳入 `principal="check"`（現行實作以 step name 通用化）。不補的話 M4.5 那個 `MCP_CALLING_PRINCIPAL` 傳不下去，subprocess 裡的 principal 是 `None`，靜默 fail-closed 查無資料 |
 
 **P2 完成的定義**：手動起一個 gateway 以 `check` 身分 call 一次 `memory__browse_semantic_memory`，
 回傳長相正確；換一個沒 grant 的 principal call，回空不報錯。
@@ -451,8 +451,8 @@ turn 2 撞牆後 agent 大概率想不到答案在那裡，會直接輸出「酒
 | 檔案 | 異動 | 內容 |
 |---|---|---|
 | `workflows/definitions/stt_exclusion_notify.yaml` | **新增** | 三步同名（stt/check/notified），`check` 的 output_schema 是 P4 那六個欄位，`notified` 的 input_schema 是 `should_notify`/`subject`/`body`。`memory: write` 已接上（見下） |
-| [agents/check/server.py](../agents/check/server.py) | 修改 | 改呼叫 `judge_exclusion`。⚠️ 它是靠 `app.state.step` 拿 schema 的，要確認 workflow 選擇機制能指到新 yaml（可能需要環境變數或啟動參數，實作時確認） |
-| [agents/notified/server.py](../agents/notified/server.py) | 修改 | 對應新欄位（P0 已改一半） |
+| [agents/runtime.py](../agents/runtime.py) | 修改 | `check` route 依目前 workflow 呼叫 `judge_exclusion`，schema 由 live spec 取得；workflow 選擇仍需指向同一份 YAML |
+| [agents/runtime.py](../agents/runtime.py) | 修改 | `notified` route 對應新欄位（P0 已改一半） |
 | `samples/gen_policy_01.wav` | **新增** | 客戶自述情況**牽涉**除外責任（酒駕致失能／自傷／犯罪行為）。macOS `say -v Meijia` 產生，跟現有假音檔同做法 |
 | `samples/gen_policy_02.wav` | **新增** | **不牽涉**（單純問「長期照顧狀態」怎麼認定、要準備什麼文件） |
 | [README.md](../README.md) | 修改 | 示範 workflow 那節補上第二個場景，說明兩個場景並存、各自走哪條路徑 |

@@ -1,6 +1,6 @@
 # Multi-Agent Platform
 
-公司內部多 agent 平台的原型（平台目標見 [CLAUDE.md](CLAUDE.md)）。平台上目前有**兩個示範 workflow**，用來驗證基礎建設堪不堪用，都是同一個形狀：語音轉文字 → 檢核 → 通知。
+公司內部多 agent 平台的原型（平台目標與開發規範見 [AGENTS.md](AGENTS.md)）。平台上目前有**兩個示範 workflow**，用來驗證基礎建設堪不堪用，都是同一個形狀：語音轉文字 → 檢核 → 通知。
 
 | | [stt_check_notify.yaml](workflows/definitions/stt_check_notify.yaml) | [stt_exclusion_notify.yaml](workflows/definitions/stt_exclusion_notify.yaml) |
 |---|---|---|
@@ -18,7 +18,7 @@
 | 入口 | [workflows/simple_pipeline.py](workflows/simple_pipeline.py) | [orchestrator/trigger.py](orchestrator/trigger.py) |
 | 編排 | 單一 process 內的 LangGraph `StateGraph` | Master Agent + 每步一個 worker process，靠 [event_bus/](event_bus/) 協調 |
 | 執行狀態存哪 | `checkpoints` 三張表（LangGraph checkpointer） | `orchestrator_runs`（[orchestrator/run_state.py](orchestrator/run_state.py)） |
-| agent 怎麼被呼叫 | in-process function call | HTTP（[agents/](agents/) 三個獨立 service） |
+| agent 怎麼被呼叫 | in-process function call | HTTP（[agents/runtime.py](agents/runtime.py) 單一 service、三條 route） |
 | 定位 | 最早的版本，刻意凍結不動（見 [workflows/parity_check.py](workflows/parity_check.py)） | **目前的主線** |
 
 除外責任那個場景（`stt_exclusion_notify`）**只有事件驅動模式**——`workflows/simple_pipeline.py` 是刻意凍結的舊版本，不會跟著新場景長。
@@ -31,7 +31,7 @@
 stt -> check -> notified
 ```
 
-- **stt**：透過 `MCPGateway` 連上 [mcp_servers/stt](mcp_servers/stt/)（轉錄）與 [mcp_servers/format_check](mcp_servers/format_check/)（格式檢查）兩個 MCP server，透過 LiteLLM Gateway 呼叫 LLM（`claude-haiku`）自行決定要不要先檢查音檔格式、再進行轉錄（[llm/stt_agent.py](llm/stt_agent.py)）。轉錄背後跑的是 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（[services/stt/breeze_asr.py](services/stt/breeze_asr.py)），一樣透過 LiteLLM Gateway 呼叫。兩個場景共用同一顆 stt agent，不分場景。
+- **stt**：透過 `MCPGateway` 連上 [mcp_servers/stt](mcp_servers/stt/)（轉錄）與 [mcp_servers/format_check](mcp_servers/format_check/)（格式檢查）兩個 MCP server，透過 LiteLLM Gateway 呼叫 workflow 宣告的 LLM 自行決定要不要先檢查音檔格式、再進行轉錄（[llm/stt_agent.py](llm/stt_agent.py)）。`stt_check_notify` 使用 `claude-haiku`，`stt_exclusion_notify` 使用 `gemini-cheap`；兩者共用相同 agent 邏輯，但 model alias 由各自 YAML 決定。轉錄背後跑的是 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（[services/stt/breeze_asr.py](services/stt/breeze_asr.py)），一樣透過 LiteLLM Gateway 呼叫。
 - **check**：兩個場景各自一套判斷邏輯，[agents/runtime.py](agents/runtime.py) 的 `/check/run` 路由依啟動時選的 workflow 決定呼叫哪一套（見下方「切換示範 workflow」）：
   - `stt_check_notify`：透過 LiteLLM Gateway 呼叫 LLM（`local-qwen`）判斷逐字稿是否提到台積電，並用確定性的別名比對當 backstop（[llm/tsmc_judge.py](llm/tsmc_judge.py)）。
   - `stt_exclusion_notify`：透過 LiteLLM Gateway 呼叫 LLM（`claude-haiku`）判斷客戶描述的情況是否涉及保單除外責任——不會把保單條款塞進 prompt，而是透過 [`browse_semantic_memory`](mcp_servers/memory/server.py) 這個 MCP tool 自己決定要往下鑽哪個分支，只把讀到過的條文拿來引用（[llm/exclusion_judge.py](llm/exclusion_judge.py)，詳見 [docs/exclusion-scenario-plan.md](docs/exclusion-scenario-plan.md)）。
@@ -76,6 +76,8 @@ Service 層     services/{stt,notified}/  <------------------------+
 
 依序照做，每一步都有驗證方式。卡住的話看 [docs/setup.md](docs/setup.md)（常見錯誤與排除）。
 
+以下主要指令以 macOS / Bash 為例；Windows / PowerShell 請改看 [docs/windows-setup.md](docs/windows-setup.md)。
+
 ### 1. 專案本身
 
 需要 Python 3.11+ 與 [uv](https://docs.astral.sh/uv/)。
@@ -115,8 +117,8 @@ cp .env.example .env
 
 打開 `.env` 填：
 
-- `ANTHROPIC_API_KEY`——`claude-haiku` 用，兩個示範場景的 `stt`／`notified`（以及除外責任場景的 `check`）都走它，**不填跑不動**。
-- `GEMINI_API_KEY`——示範場景本身用不到，但 `gemini-cheap`（[scripts/distill_procedural.py](scripts/distill_procedural.py) 的知識蒸餾）與 `gemini-strong`（[evals/run_eval.py](evals/run_eval.py) `--model` 的對照診斷）靠它。只跑示範場景可以先留空。
+- `ANTHROPIC_API_KEY`——`claude-haiku` 用；台積電場景的 `stt`／`notified`，以及除外責任場景的 `check`／`notified` 都需要，**目前兩個示範場景都不能留空**。
+- `GEMINI_API_KEY`——除外責任場景的 `stt` 宣告為 `gemini-cheap`，因此跑 `stt_exclusion_notify` 時必填；[scripts/distill_procedural.py](scripts/distill_procedural.py) 的知識蒸餾與 [evals/run_eval.py](evals/run_eval.py) 的 Gemini 對照診斷也需要。只跑 `stt_check_notify` 且不執行這些工具時可以留空。
 
 `PERSISTENCE_DATABASE_URL` 預設值對應上一步建的 DB，本機 Postgres 有設帳密才要改。
 
@@ -355,11 +357,11 @@ samples/                 測試音檔（gen_tsmc_*/gen_other_* 是台積電場�
 demo/                    瀏覽器 UI（api.py 是 port 8010 的 FastAPI 後端、index.html 是純前端）：組裝/測試 agent、觸發 workflow、審核 memory-writer 寫入的 pending 記憶
 transcribe.py            獨立的 ASR 測試腳本
 docs/                    設計文件（見下）
-.github/workflows/       CI（目前只有 gather_concurrency_smoke_test.py——唯一不用 Postgres/LLM 的 smoke test，其餘幾支還沒接進 CI）
+.github/workflows/       CI（Windows dependency-free 相容檢查，以及 Ubuntu 上不需 Postgres/LLM 的 gather/MCP smoke tests）
 ```
 
 ## 進一步閱讀
 
-- [CLAUDE.md](CLAUDE.md) — 平台目標，以及「什麼算平台能力、什麼算場景邏輯」的判準
+- [AGENTS.md](AGENTS.md) — 平台目標、Codex/貢獻規範，以及「什麼算平台能力、什麼算場景邏輯」的判準
 - [docs/README.md](docs/README.md) — 每份設計文件在講什麼、什麼時候該看，一份索引
 - [TODO.md](TODO.md) — 已知缺口與尚未做的決策；[fixed.md](fixed.md) — 已經解決的

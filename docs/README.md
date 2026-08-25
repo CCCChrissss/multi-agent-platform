@@ -2,12 +2,16 @@
 
 每份文件在做什麼、什麼時候該看。安裝步驟本身在專案根目錄的 [README.md](../README.md)，這裡只收設計/機制文件。
 
+文件中的 `donydony228/agent-architecture` issue 連結是移植前的歷史決策來源；新的待辦與
+修改只追蹤在 [本 repository issues](https://github.com/CCCChrissss/multi-agent-platform/issues)。
+
 ## 上手
 
 | 文件 | 在講什麼 |
 |---|---|
 | [onboarding.md](onboarding.md) | 接手新人看的：跟著 `stt_check_notify` 一次真實執行，從 workflow 定義 YAML 一路追到最底層的 MCP 呼叫，八步走完分層架構圖全部六層 |
 | [setup.md](setup.md) | 安裝疑難排解——根目錄 README 的「從零開始安裝」是 happy path，這份收實際會卡住的地方（pgvector 編譯、Postgres 連線、Ollama 撞 port） |
+| [windows-setup.md](windows-setup.md) | Windows / PowerShell 的安裝與操作對照，包含 Python 3.11、port 檢查和安裝前可跑的相容性檢查 |
 | [testing.md](testing.md) | 怎麼驗證改動：沒有 pytest，全部是手動跑的 smoke test，分「單一 MCP server」跟「完整 pipeline」兩層，含記憶蒸餾 pipeline 的手動試跑步驟 |
 | [observability.md](observability.md) | 怎麼查一次執行的稽核歷史/執行狀態，Postgres 各張表存什麼、`store` 跟 checkpoint 的差別 |
 
@@ -18,6 +22,7 @@
 | [agent-api-contract.md](agent-api-contract.md) | agent 的請求/回應 envelope 長什麼樣，以及為什麼刻意跟傳輸層（function call / event / HTTP）脫鉤 |
 | [event-driven-multi-agent-coordination-plan.md](event-driven-multi-agent-coordination-plan.md) | 事件驅動模式的完整設計：Master Agent + Worker + Event Bus 怎麼協作，取代 `simple_pipeline.py` 單一 process 同步執行 |
 | [generic-agent-runtime-plan.md](generic-agent-runtime-plan.md) | 讓「新增一個 agent」從寫程式碼變成寫設定：agent 的身分（prompt/model/tools）怎麼變成可被 UI 組裝的宣告式資料 |
+| [ui-backend-integration-plan.md](ui-backend-integration-plan.md) | Demo UI 如何透過正式 workflow/policy loader 寫入設定、熱載入 agent，及前後端的狀態契約 |
 | [harness-engineering-principles.md](harness-engineering-principles.md) | 新增/調整 agent、tool 前要對照的檢查清單：agent 需要回饋迴路（工具回傳值、執行中注入、單輪驗收、外層 loop）而非完美提示 |
 
 ## 長期記憶與知識蒸餾
@@ -26,6 +31,7 @@
 |---|---|
 | [long-term-memory-plan.md](long-term-memory-plan.md) | 長期記憶（跨執行的知識）導入計畫：跟 checkpointer 的差別、要怎麼做成同步/事件驅動兩條路徑都能共用的獨立元件 |
 | [knowledge-distillation-plan.md](knowledge-distillation-plan.md) | episodic 經驗怎麼蒸餾成 procedural 規則、人審核的品質關卡（M5）怎麼設計 |
+| [distill-ui-plan.md](distill-ui-plan.md) | 記憶蒸餾審核台的 pending queue、前後比較、人工核准/拒絕與 smoke test 邊界 |
 
 ## 除外責任示範場景
 
