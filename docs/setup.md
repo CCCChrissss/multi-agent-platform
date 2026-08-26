@@ -144,13 +144,15 @@ Test-NetConnection -ComputerName 127.0.0.1 -Port 4000 -InformationLevel Quiet
 
 ### 8001 能啟動，但第一次轉錄失敗或長時間等待
 
-Port listener 只代表 FastAPI process 已啟動，不代表 Breeze 權重與推論 backend 已就緒。這台電腦目前：
+Port listener 只代表 FastAPI process 已啟動，不代表 Breeze 權重與推論 backend 已就緒。這台電腦已實際確認：
 
-- Breeze-ASR-25 權重尚未下載完成。
-- `.venv` 是 `torch 2.13.0+cpu`。
-- `torch.cuda.is_available()` 是 `False`。
+- Breeze-ASR-25 權重已快取到 `D:\Projects\multi-agent平台架設\.hf-cache`。
+- `.venv` 是 `torch 2.13.0+cu132`。
+- `torch.cuda.is_available()` 是 `True`，GPU 是 RTX 4050 Laptop GPU 6 GB。
+- `samples/gen_tsmc_01.wav` 直接推論成功，峰值 CUDA reserved 約 4.51 GiB。
+- 目前沒有 FFmpeg；[services/stt/breeze_asr.py](../services/stt/breeze_asr.py) 會用既有 `librosa` / `soundfile` 載入及重採樣，不再把音檔路徑直接交給 Transformers。
 
-因此完整 STT 尚未驗證。下一階段需要先確認相容的 CUDA / PyTorch 組合與 6 GB VRAM 下的模型執行策略，再下載模型；本文件不把未執行過的安裝命令當成既定答案。
+目前尚未重驗的是 8001 HTTP route 和 LiteLLM `breeze-asr` alias。啟動前在同一個 PowerShell 或 `.env` 設定 `HF_HUB_CACHE=D:\Projects\multi-agent平台架設\.hf-cache`，否則 process 可能回到 C 槽預設快取，看不到已下載的權重。
 
 ## Workflow 選擇與 event-driven workers
 
