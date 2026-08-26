@@ -17,7 +17,7 @@ steps:
     # docs/generic-agent-runtime-plan.md P5: the LiteLLM model_name
     # (gateway/config.yaml) this step calls -- was llm/stt_agent.py's own
     # MODEL_NAME module constant.
-    model: claude-haiku
+    model: local-qwen
     input_schema:
       type: object
       required: [audio_ref]
@@ -97,7 +97,7 @@ steps:
     command_type: notified.run
     completion_type: notified.completed
     # was llm/notify_agent.py's own MODEL_NAME module constant (P5).
-    model: claude-haiku
+    model: local-qwen
     # Scenario-agnostic on purpose (docs/exclusion-scenario-plan.md §3.5/P0):
     # `notified` only knows "send or don't, with this subject/body" --
     # *whether* to notify is a scenario judgment call that belongs to

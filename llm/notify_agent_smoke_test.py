@@ -29,6 +29,35 @@ async def _const(value):
     return value
 
 
+async def scenario_should_notify_false_short_circuits() -> None:
+    """A negative upstream decision must never reach the model or tools."""
+    import llm.notify_agent as m
+
+    gateway = AsyncMock()
+    gateway.list_openai_tools = AsyncMock()
+    gateway.call_tool = AsyncMock()
+
+    with patch("harness.agent_loop.chat_with_tools") as chat_with_tools:
+        log = await m.decide_and_notify(
+            gateway,
+            should_notify=False,
+            subject="主旨",
+            body="內容",
+            model="local-qwen",
+            system_prompt="system",
+            user_prompt="user",
+            store=None,
+            memory_policy=None,
+            tenant="default",
+        )
+
+    assert log == [], log
+    gateway.list_openai_tools.assert_not_awaited()
+    gateway.call_tool.assert_not_awaited()
+    chat_with_tools.assert_not_called()
+    print("[should_notify_false_short_circuits] OK -- no LLM or tool call was made")
+
+
 async def scenario_log_accumulates_every_call_and_gates_on_success() -> None:
     """A failed send followed by a successful one on a different channel --
     notified_log must contain both entries (in order, [ERROR] marked on the
@@ -115,6 +144,7 @@ async def scenario_should_notify_true_with_no_send_raises() -> None:
 
 
 async def main() -> None:
+    await scenario_should_notify_false_short_circuits()
     await scenario_log_accumulates_every_call_and_gates_on_success()
     await scenario_should_notify_true_with_no_send_raises()
     print("\nAll notify_agent smoke tests passed.")

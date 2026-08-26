@@ -99,6 +99,13 @@ async def decide_and_notify(
     tenant: str = "default",
     workflow_name: str = _DEFAULT_WORKFLOW_NAME,
 ) -> list[str]:
+    # `should_notify` is an upstream business decision, not a suggestion for
+    # the model to reconsider. Enforce the negative branch before exposing
+    # any side-effecting tools: small/local models may ignore a prompt-only
+    # instruction and send anyway.
+    if not should_notify:
+        return []
+
     # system_prompt/user_prompt/model come from the caller's workflow spec
     # (agents/runtime.py renders workflows/definitions/*.yaml's `notified`
     # step prompt/model via orchestrator.workflow_def.render_prompt()/
