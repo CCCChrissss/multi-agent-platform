@@ -1,5 +1,8 @@
 # 除外責任「行為人區分」demo 設計與跑法
 
+> [!NOTE]
+> 這是原作者 demo 設計與歷史跑法。因 `stt_exclusion_notify` 目前仍依賴 Anthropic / Gemini，本文件尚未在目前 Windows 無雲端 key 的環境重新完整執行；現行狀態見 [current-windows-status.md](current-windows-status.md)。
+
 ## 0. 這份文件在做什麼
 
 設計一組誤判案例，示範知識蒸餾閉環（[knowledge-distillation-plan.md](knowledge-distillation-plan.md)）完整跑一輪，**且完整走過 P5 之後的 episodic 審核關卡**：

@@ -1,6 +1,6 @@
 # 接手指南：跟著一次呼叫追下去
 
-比起先讀文件，直接跟著 `stt_check_notify` 這個 workflow 的一次真實執行，從資料（YAML）追到最底層的 MCP 呼叫。裝好環境見 [setup.md](setup.md)。
+這份文件是**閱讀程式碼的追蹤路線**：沿著 `stt_check_notify` 從 YAML 追到 MCP 呼叫。它原本以一次真實執行為敘事方式，但目前 Windows 本機尚未完成 Breeze-ASR-25 與完整語音 workflow 驗證；請先讀 [current-windows-status.md](current-windows-status.md)，安裝與實際操作則以 [windows-setup.md](windows-setup.md) 為準。
 
 1. **workflow 定義（資料）** — [workflows/definitions/stt_check_notify.yaml](../workflows/definitions/stt_check_notify.yaml)
    每個 step 的 `command_type`/`completion_type`（事件名）、`input_schema`/`output_schema`、`prompt`。
@@ -26,4 +26,4 @@
 8. **MCP 路由 + RBAC** — [mcp_servers/gateway.py](../mcp_servers/gateway.py)`::MCPGateway.call_tool()`，對照 [mcp_servers/policy.yaml](../mcp_servers/policy.yaml)
    落到實際的 [mcp_servers/stt/server.py](../mcp_servers/stt/) → [services/stt/breeze_asr.py](../services/stt/breeze_asr.py)。
 
-這八步覆蓋 README「分層架構」圖的全部六層。追完之後再讀 [AGENTS.md](../AGENTS.md)（為什麼）和 [harness-engineering-principles.md](harness-engineering-principles.md)（動手前的規矩），補「為什麼這樣設計」。
+這八步覆蓋 README「分層架構」圖的全部六層。可以先用靜態閱讀走完；等 Breeze 與完整服務鏈準備完成後，再依 [windows-setup.md](windows-setup.md) 實際觸發並用 `thread_id` 對照。之後再讀 [AGENTS.md](../AGENTS.md)（協作規範）和 [harness-engineering-principles.md](harness-engineering-principles.md)（Agent 工程原則），補「為什麼這樣設計」。

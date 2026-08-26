@@ -1,5 +1,8 @@
 # 新示範場景：保單除外責任檢核（含記憶的漸進式揭露）
 
+> [!NOTE]
+> 這是除外責任場景的上游設計與落地紀錄。該 workflow 目前仍宣告 `gemini-cheap` / `claude-haiku`，尚未在無雲端 API key 的 Windows 環境完整執行；目前狀態見 [current-windows-status.md](current-windows-status.md)。
+
 ## 0. 這份文件在回答什麼
 
 把示範 workflow 從「語音 → 是否提到台積電 → 通知」換成「客戶與業務討論保險權利的對話 → 是否牽涉除外責任 → 通知」。

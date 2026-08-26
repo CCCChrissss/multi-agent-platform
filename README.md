@@ -2,6 +2,9 @@
 
 公司內部多 agent 平台的原型（平台目標與開發規範見 [AGENTS.md](AGENTS.md)）。平台上目前有**兩個示範 workflow**，用來驗證基礎建設堪不堪用，都是同一個形狀：語音轉文字 → 檢核 → 通知。
 
+> [!IMPORTANT]
+> 本 repository 現在以 **Windows / PowerShell / Codex** 為主要操作環境。2026-08-26 的實機安裝狀態、已驗證範圍與目前阻擋項目，請先看 [docs/current-windows-status.md](docs/current-windows-status.md)。目前五個常駐服務均已停止，Breeze-ASR-25 尚未下載完成，因此尚未宣稱完整語音 workflow 已在本機跑通。
+
 | | [stt_check_notify.yaml](workflows/definitions/stt_check_notify.yaml) | [stt_exclusion_notify.yaml](workflows/definitions/stt_exclusion_notify.yaml) |
 |---|---|---|
 | `check` 判斷什麼 | 逐字稿有沒有提到台積電（[llm/tsmc_judge.py](llm/tsmc_judge.py)） | 客戶描述的情況有沒有涉及保單除外責任（[llm/exclusion_judge.py](llm/exclusion_judge.py)） |
@@ -31,11 +34,11 @@
 stt -> check -> notified
 ```
 
-- **stt**：透過 `MCPGateway` 連上 [mcp_servers/stt](mcp_servers/stt/)（轉錄）與 [mcp_servers/format_check](mcp_servers/format_check/)（格式檢查）兩個 MCP server，透過 LiteLLM Gateway 呼叫 workflow 宣告的 LLM 自行決定要不要先檢查音檔格式、再進行轉錄（[llm/stt_agent.py](llm/stt_agent.py)）。`stt_check_notify` 使用 `claude-haiku`，`stt_exclusion_notify` 使用 `gemini-cheap`；兩者共用相同 agent 邏輯，但 model alias 由各自 YAML 決定。轉錄背後跑的是 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（[services/stt/breeze_asr.py](services/stt/breeze_asr.py)），一樣透過 LiteLLM Gateway 呼叫。
+- **stt**：透過 `MCPGateway` 連上 [mcp_servers/stt](mcp_servers/stt/)（轉錄）與 [mcp_servers/format_check](mcp_servers/format_check/)（格式檢查）兩個 MCP server，透過 LiteLLM Gateway 呼叫 workflow 宣告的 LLM 自行決定要不要先檢查音檔格式、再進行轉錄（[llm/stt_agent.py](llm/stt_agent.py)）。目前 `stt_check_notify` 使用 `local-qwen`，`stt_exclusion_notify` 仍使用 `gemini-cheap`；兩者共用相同 agent 邏輯，但 model alias 由各自 YAML 決定。實際轉錄仍由 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（[services/stt/breeze_asr.py](services/stt/breeze_asr.py)）負責，不會改由 `local-qwen` 取代。
 - **check**：兩個場景各自一套判斷邏輯，[agents/runtime.py](agents/runtime.py) 的 `/check/run` 路由依啟動時選的 workflow 決定呼叫哪一套（見下方「切換示範 workflow」）：
   - `stt_check_notify`：透過 LiteLLM Gateway 呼叫 LLM（`local-qwen`）判斷逐字稿是否提到台積電，並用確定性的別名比對當 backstop（[llm/tsmc_judge.py](llm/tsmc_judge.py)）。
   - `stt_exclusion_notify`：透過 LiteLLM Gateway 呼叫 LLM（`claude-haiku`）判斷客戶描述的情況是否涉及保單除外責任——不會把保單條款塞進 prompt，而是透過 [`browse_semantic_memory`](mcp_servers/memory/server.py) 這個 MCP tool 自己決定要往下鑽哪個分支，只把讀到過的條文拿來引用（[llm/exclusion_judge.py](llm/exclusion_judge.py)，詳見 [docs/exclusion-scenario-plan.md](docs/exclusion-scenario-plan.md)）。
-- **notified**：兩個場景共用同一顆 agent，不知道場景邏輯——只收「要不要發、主旨、內容」，透過 `MCPGateway`（[mcp_servers/gateway.py](mcp_servers/gateway.py)）連上 [mcp_servers/notified](mcp_servers/notified/)（Slack / Gmail 兩個 tool，背後打 [services/notified/](services/notified/)），透過 LiteLLM Gateway 呼叫 LLM（`claude-haiku`）自行決定要用哪個管道、要不要先查收件人的管道偏好，執行結果會回饋給模型讓它做下一步決定（[llm/notify_agent.py](llm/notify_agent.py)）。「要不要發」這個場景判斷是 `check` 決定的，不是 `notified` 自己猜。
+- **notified**：兩個場景共用同一顆 agent，不知道場景邏輯——只收「要不要發、主旨、內容」，透過 `MCPGateway`（[mcp_servers/gateway.py](mcp_servers/gateway.py)）連上 [mcp_servers/notified](mcp_servers/notified/)（Slack / Gmail 兩個 tool，背後打 [services/notified/](services/notified/)）。`stt_check_notify` 目前宣告 `local-qwen`，`stt_exclusion_notify` 仍宣告 `claude-haiku`。`should_notify=false` 時會在呼叫 LLM / tool 前直接回傳 `[]`；需要通知時才由模型決定管道。目前 notified service 是本機 placeholder，不會真的對外寄送。
 
 ### 單一 runtime process
 
@@ -65,18 +68,33 @@ Agent 層    agents/runtime.py（stt/check/notified 三個路由）             
 MCP server 層  mcp_servers/{stt,format_check,lookup,notified,memory,calc}/  |
                                      |                             |
 Service 層     services/{stt,notified}/  <------------------------+
-               （Breeze-ASR-25、實際發送通知）
+               （Breeze-ASR-25、通知 placeholder）
 ```
 
 兩種模式共用同一份 agent 邏輯（`llm/`、`mcp_servers/*/agent.py`）——差別只在誰去呼叫它們。
 
 ---
 
-## 從零開始安裝
+## Windows / PowerShell 從零開始
 
-依序照做，每一步都有驗證方式。卡住的話看 [docs/setup.md](docs/setup.md)（常見錯誤與排除）。
+完整步驟與每一步的成功判斷統一維護在 [docs/windows-setup.md](docs/windows-setup.md)，錯誤分類見 [docs/setup.md](docs/setup.md)。以下只列目前這台電腦實際使用的路徑與最短入口。
 
-以下主要指令以 macOS / Bash 為例；Windows / PowerShell 請改看 [docs/windows-setup.md](docs/windows-setup.md)。
+```powershell
+Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$env:PATH = 'C:\Users\User\.local\bin;C:\Users\User\AppData\Local\Programs\Ollama;' + $env:PATH
+$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+$env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
+uv sync
+Copy-Item .env.example .env  # 只有 .env 不存在時才執行；既有 .env 不要覆寫
+```
+
+本機已安裝 PostgreSQL 18.6、pgvector 0.8.6、`qwen2.5:3b` 與 `bge-m3`。資料庫密碼是安裝 PostgreSQL 時由使用者自行設定，不來自 repository，也不應寫進文件。
+
+目前預設 workflow `stt_check_notify` 的三個 agent 決策模型都是 `local-qwen`，不需要 Anthropic / Gemini key；但完整語音流程仍需要 Breeze-ASR-25。`stt_exclusion_notify` 尚未本機化，仍需要有效的 Anthropic / Gemini key。
+
+### 原作者 macOS / Bash 安裝參考（尚未於本機重驗）
+
+以下內容保留原作者的 macOS 操作脈絡，供上游差異比對；它不是目前 Windows 環境的直接操作指令。
 
 ### 1. 專案本身
 
@@ -117,8 +135,8 @@ cp .env.example .env
 
 打開 `.env` 填：
 
-- `ANTHROPIC_API_KEY`——`claude-haiku` 用；台積電場景的 `stt`／`notified`，以及除外責任場景的 `check`／`notified` 都需要，**目前兩個示範場景都不能留空**。
-- `GEMINI_API_KEY`——除外責任場景的 `stt` 宣告為 `gemini-cheap`，因此跑 `stt_exclusion_notify` 時必填；[scripts/distill_procedural.py](scripts/distill_procedural.py) 的知識蒸餾與 [evals/run_eval.py](evals/run_eval.py) 的 Gemini 對照診斷也需要。只跑 `stt_check_notify` 且不執行這些工具時可以留空。
+- `ANTHROPIC_API_KEY`——目前只有仍宣告 `claude-haiku` 的 workflow / 工具才需要。預設的 `stt_check_notify` 不需要；`stt_exclusion_notify` 的 `check`／`notified` 仍需要。
+- `GEMINI_API_KEY`——`stt_exclusion_notify` 的 `stt` 仍宣告 `gemini-cheap`，因此執行該 workflow 時需要；[scripts/distill_procedural.py](scripts/distill_procedural.py) 的知識蒸餾與 [evals/run_eval.py](evals/run_eval.py) 的 Gemini 對照診斷也可能需要。只跑 `stt_check_notify` 且不執行這些工具時可以留空。
 
 `PERSISTENCE_DATABASE_URL` 預設值對應上一步建的 DB，本機 Postgres 有設帳密才要改。
 
@@ -143,13 +161,90 @@ ollama list
 
 > 用 `brew services` 讓 Ollama 常駐的話，要把 [Procfile](Procfile) 裡 `ollama:` 那行註解掉，不然下一步 `honcho start` 會撞 port 失敗。
 
-### 5. Breeze-ASR-25（自動）
+### 5. Breeze-ASR-25（上游設計；Windows 本機尚未完成）
 
-第一次跑 `stt` 時會自動從 HuggingFace 下載（需要網路，之後快取在本機），不用預先準備。第一次呼叫會因此慢很多。
+上游設計是在第一次跑 `stt` 時從 Hugging Face 下載模型並快取。這台 Windows 電腦尚未完成權重下載，而且 `.venv` 目前是 CPU 版 PyTorch；在另行完成 CUDA / PyTorch / 模型驗證前，不把「會自動下載」當成已驗證的可用路徑。
 
 ---
 
-## 執行
+## Windows / PowerShell 執行（目前主線）
+
+目前五個常駐服務均已停止。等 Breeze-ASR-25 與 PyTorch 執行環境完成後，在 repository 根目錄開啟第一個 PowerShell：
+
+```powershell
+Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$env:PYTHONUTF8 = '1'
+$env:PATH = 'C:\Users\User\.local\bin;C:\Users\User\AppData\Local\Programs\Ollama;' + $env:PATH
+$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+$env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
+Remove-Item Env:WORKFLOW_DEF_PATH -ErrorAction SilentlyContinue  # 使用預設 stt_check_notify
+.\.venv\Scripts\honcho.exe start -f Procfile -e .env
+```
+
+`PYTHONUTF8=1` 是這台繁體中文 Windows 的必要設定；否則 Honcho 2.0.0 可能用 CP950 讀 UTF-8 `.env`，產生 `UnicodeDecodeError`。如果 Windows 版 Ollama 已在背景占用 11434，先關閉該背景 process，再讓 Procfile 啟動 Ollama；同一個 port 不能同時啟動兩份服務。
+
+另開第二個 PowerShell 檢查五個 port 與 LiteLLM alias：
+
+```powershell
+11434, 4000, 8001, 8002, 8003 | ForEach-Object {
+    [pscustomobject]@{
+        Port = $_
+        Listening = Test-NetConnection -ComputerName 127.0.0.1 -Port $_ -InformationLevel Quiet
+    }
+}
+
+(Invoke-RestMethod -Uri 'http://127.0.0.1:4000/v1/models').data.id
+```
+
+預期五個 port 都是 `True`，alias 清單包含 `local-qwen`、`local-embed`、`breeze-asr`、`claude-haiku`、`gemini-cheap`、`gemini-strong`。Alias 出現在清單只代表 LiteLLM 已載入設定；沒有 API key 的雲端 alias 仍不能實際呼叫。
+
+確認本機模型的實際呼叫：
+
+```powershell
+$chatBody = @{
+    model = 'local-qwen'
+    messages = @(@{ role = 'user'; content = '只回覆 OK' })
+} | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Uri 'http://127.0.0.1:4000/v1/chat/completions' `
+    -Method Post -ContentType 'application/json' -Body $chatBody
+
+$embedBody = @{ model = 'local-embed'; input = @('embedding smoke test') } |
+    ConvertTo-Json -Depth 5
+$embedResponse = Invoke-RestMethod -Uri 'http://127.0.0.1:4000/v1/embeddings' `
+    -Method Post -ContentType 'application/json' -Body $embedBody
+$embedResponse.data[0].embedding.Count
+```
+
+第二個指令預期維度為 `1024`。這兩項只驗證本機 LLM 與 embedding，不等於 Breeze-ASR 或完整 workflow 已通過。
+
+事件驅動模式需要第三個 PowerShell，並且 `WORKFLOW_DEF_PATH` 必須與 Agent Runtime 使用同一份 YAML：
+
+```powershell
+Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$env:PYTHONUTF8 = '1'
+$env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
+.\.venv\Scripts\honcho.exe start -f Procfile.workers -e .env
+```
+
+觸發一次 workflow：
+
+```powershell
+.\.venv\Scripts\python.exe -m orchestrator.trigger `
+    --workflow-def workflows/definitions/stt_check_notify.yaml `
+    --payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'
+```
+
+trigger 會印出 `thread_id`。用該值查執行結果與每次 LLM / MCP tool call：
+
+```powershell
+.\.venv\Scripts\python.exe -m persistence.history <thread_id>
+```
+
+完整的三個 terminal 配置、workflow 切換、SQL 查詢、預期輸出與錯誤排查見 [docs/windows-setup.md](docs/windows-setup.md) 與 [docs/observability.md](docs/observability.md)。目前 Breeze 尚未就緒，所以以上完整觸發流程是下一階段的操作程序，尚未在這台電腦完成端到端驗證。
+
+## 原作者 macOS / Bash 執行參考（尚未於本機重驗）
+
+以下段落保留原作者的執行方式與功能說明，作為上游設計參考。Windows 使用者不要直接執行其中的 `brew`、`export`、`lsof` 或 `pkill` 指令。
 
 ### 步驟 0：啟動常駐服務（兩種模式共用）
 
@@ -281,12 +376,12 @@ uv run python -m orchestrator.trigger \
 
 ---
 
-## Demo UI（用瀏覽器組 workflow / 審核長期記憶）
+## Demo UI（保留功能；Windows 尚未實機驗證）
 
 不寫指令、用瀏覽器操作的替代介面：組裝/測試 agent、瀏覽 workflow 設定、觸發執行、審核 `memory-writer` 寫入的 `pending` 記憶（approve/reject）。
 
-```bash
-uv run uvicorn demo.api:app --port 8010
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn demo.api:app --port 8010
 ```
 
 啟動後直接用瀏覽器打開 [demo/index.html](demo/index.html)（本機檔案，不用另外起 static server——它是純前端，透過 CORS 打 `http://localhost:8010`）。需要上面 Postgres + `honcho start` 這批常駐服務已經在跑（catalog 讀 `gateway/config.yaml`、跑 workflow 打 8003 的 agent runtime）；要審核記憶則另外需要 `memory-writer`（`honcho -f Procfile.workers start`）先寫入過 `pending` 候選。
@@ -295,8 +390,8 @@ uv run uvicorn demo.api:app --port 8010
 
 ## 觀察執行結果
 
-```bash
-uv run python -m persistence.history <thread_id>
+```powershell
+.\.venv\Scripts\python.exe -m persistence.history <thread_id>
 ```
 
 印每一步的 checkpoint 快照 + 每個 agent 內部的 LLM/tool 呼叫紀錄，兩種模式都可用。事件驅動模式怎麼直接查執行狀態、Postgres 各張表存什麼、`store` 跟 checkpoint 的差別，見 [docs/observability.md](docs/observability.md)。
@@ -305,31 +400,32 @@ uv run python -m persistence.history <thread_id>
 
 ## 驗證
 
-沒有 pytest，全部是手動跑的 smoke test：
+專案主要使用可直接執行的 smoke test，而不是 pytest。PowerShell 指令如下：
 
-```bash
-uv run python -m event_bus.smoke_test           # event bus 本身
-uv run python -m orchestrator.smoke_test        # 編排層
-uv run python -m workflows.parity_check         # 兩種模式一致性
-uv run python -m persistence.memory_smoke_test  # 長期記憶
+```powershell
+.\.venv\Scripts\python.exe -m event_bus.smoke_test
+.\.venv\Scripts\python.exe -m orchestrator.smoke_test
+.\.venv\Scripts\python.exe -m workflows.parity_check
+.\.venv\Scripts\python.exe -m persistence.memory_smoke_test
 ```
 
 ⚠️ 跑前先關掉 `honcho -f Procfile.workers start`（consumer group 撞名，會搶走測試的命令）。各支的前置條件、記憶蒸餾 pipeline（P0-P5）手動試跑步驟，見 [docs/testing.md](docs/testing.md)。
+
+目前 CI 的 `gather-concurrency-smoke-test` 有一個已知失敗：測試仍預期不通知時回傳 `["no notification needed"]`，實作現在回傳 `[]`。這個文件階段只記錄現況，不修改測試或行為；其他已驗證狀態見 [docs/current-windows-status.md](docs/current-windows-status.md)。
 
 ---
 
 ## 關閉
 
-兩個 honcho terminal 各按一次 `Ctrl+C`，各自的 process 都會連帶關掉（trigger 是一次性執行，跑完自動結束；demo UI 是另開的 terminal，`Ctrl+C` 單獨關）。如果不小心留下殘留 process：
+兩個 Honcho terminal 各按一次 `Ctrl+C`，各自的 process 會連帶關閉；trigger 是一次性指令，demo UI 則在自己的 terminal 按 `Ctrl+C`。關閉後用 PowerShell 確認 port：
 
-```bash
-pkill -f "ollama serve"
-pkill -f "litellm --config gateway/config.yaml"
-pkill -f "uvicorn services."
-pkill -f "uvicorn agents."
-pkill -f "uvicorn demo.api"
-pkill -f "workflows.event_driven_pipeline"
+```powershell
+11434, 4000, 8001, 8002, 8003 | ForEach-Object {
+    Get-NetTCPConnection -State Listen -LocalPort $_ -ErrorAction SilentlyContinue
+}
 ```
+
+沒有輸出代表這五個 port 已無 listener。若仍有輸出，先用回傳的 `OwningProcess` 搭配 `Get-Process -Id <PID>` 確認 process 身分；不要在未確認 PID 前批次強制終止。
 
 ---
 
@@ -363,5 +459,6 @@ docs/                    設計文件（見下）
 ## 進一步閱讀
 
 - [AGENTS.md](AGENTS.md) — 平台目標、Codex/貢獻規範，以及「什麼算平台能力、什麼算場景邏輯」的判準
+- [docs/current-windows-status.md](docs/current-windows-status.md) — 目前 Windows 實機狀態、已驗證範圍、阻擋項目與已知 CI 失敗
 - [docs/README.md](docs/README.md) — 每份設計文件在講什麼、什麼時候該看，一份索引
 - [TODO.md](TODO.md) — 已知缺口與尚未做的決策；[fixed.md](fixed.md) — 已經解決的

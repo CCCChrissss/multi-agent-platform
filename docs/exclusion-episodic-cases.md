@@ -1,5 +1,8 @@
 # exclusion 情境的 episodic 種子案例清單
 
+> [!NOTE]
+> 本文件保留原作者的種子資料對照。資料與腳本仍在 repository，但目前 Windows 文件階段未重新執行 seed / distillation 流程；現行狀態見 [current-windows-status.md](current-windows-status.md)。
+
 `scripts/seed_exclusion_episodic_examples.py` 寫進 `default/episodic/stt_exclusion_notify/check` 的 6 筆案例——這是
 `scripts/distill_procedural.py`（P2 蒸餾器）唯一的輸入來源。案例的 `key` 看不出逐字稿內容，這份表補上這一層，蒸餾出新規則、
 或要加案例時先看這裡。

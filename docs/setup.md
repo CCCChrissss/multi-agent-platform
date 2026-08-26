@@ -1,104 +1,219 @@
-# 安裝疑難排解
+# 安裝與執行疑難排解
 
-根目錄 README 的主要安裝指令以 macOS / Bash 為例；Windows / PowerShell 請先看
-[windows-setup.md](windows-setup.md)，再回到本文件依錯誤類型排查。
+本文件以目前的 Windows / PowerShell 環境為主。正常安裝與完整操作步驟見 [windows-setup.md](windows-setup.md)，目前實機狀態見 [current-windows-status.md](current-windows-status.md)。
 
-[README 的「從零開始安裝」](../README.md#從零開始安裝)是happy path，這份收的是實際會卡住的地方。
+## 先判斷是哪一層失敗
 
-## pgvector
+| 層級 | Port / 元件 | 最先檢查 |
+|---|---|---|
+| 本機模型 | Ollama / 11434 | `ollama list`、`OLLAMA_MODELS`、是否重複啟動 |
+| 模型 Gateway | LiteLLM / 4000 | `/v1/models`、`litellm` log、實際 alias 呼叫 |
+| 語音辨識 | STT / 8001 | Breeze 權重、PyTorch/CUDA、`stt` log |
+| 通知 | notified / 8002 | `notified` log；目前只是假實作 |
+| Agent | Runtime / 8003 | `agents` log、workflow load、input schema |
+| 編排 | master / workers | `WORKFLOW_DEF_PATH`、PostgreSQL、event bus log |
+| 持久層 | PostgreSQL | `.env` 連線字串、資料庫名稱、pgvector |
 
-### `CREATE EXTENSION vector` 說 extension "vector" is not available
+## Windows：Honcho 讀 `.env` 出現 CP950 錯誤
 
-本機 Postgres 沒有 pgvector。Homebrew 的 `postgresql@14` 沒有附官方 build，要自己編：
+### 錯誤
 
-```bash
-git clone https://github.com/pgvector/pgvector.git
-cd pgvector
-# PG_CONFIG 要指到你實際在跑的那個 Postgres，不是 which psql 找到的那個
-make PG_CONFIG=/opt/homebrew/opt/postgresql@14/bin/pg_config
-make install PG_CONFIG=/opt/homebrew/opt/postgresql@14/bin/pg_config
+```text
+UnicodeDecodeError: 'cp950' codec can't decode byte ...
 ```
 
-裝完回到專案再跑一次 `psql agent_architecture -c "CREATE EXTENSION vector;"`。
+### 原因
 
-編譯需要 Xcode command line tools（`xcode-select --install`）。背景與當初踩到的細節見 [long-term-memory-plan.md](long-term-memory-plan.md) §1.3。
+Honcho 2.0.0 在繁體中文 Windows 上可能以 CP950 解碼 `.env`，但檔案是 UTF-8。
 
-### 裝了但還是找不到
+### 修正
 
-多半是機器上有多個 Postgres（Homebrew 一個、Postgres.app 一個、conda 一個）。確認 `psql` 連到的跟你編譯時 `PG_CONFIG` 指的是同一個：
+在同一個 PowerShell 設定 UTF-8 mode，再直接呼叫虛擬環境內的 Honcho：
 
-```bash
-psql agent_architecture -c "SHOW server_version; SHOW config_file;"
+```powershell
+Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$env:PYTHONUTF8 = '1'
+.\.venv\Scripts\honcho.exe start -f Procfile -e .env
 ```
 
-## Postgres 連線
+### 驗證
 
-### `psql: could not connect to server`
+不再出現 `UnicodeDecodeError`，且 Honcho 開始輸出 `ollama`、`litellm`、`stt`、`notified`、`agents` 的 process log。
 
-Postgres 沒在跑：`brew services start postgresql@14`。
+## PostgreSQL / pgvector
 
-### 程式跑起來噴 `KeyError: 'PERSISTENCE_DATABASE_URL'`
+### `password authentication failed`
 
-`.env` 沒建或沒有這一行。`cp .env.example .env` 之後確認檔案在**專案根目錄**（各模組的 `load_dotenv()` 是從 cwd 往上找）。
+`.env` 中的帳號或密碼與 PostgreSQL 安裝時設定的不一致。密碼不是由 repository 產生，必須使用你安裝 PostgreSQL 時設定的值。
 
-### 連得上但 `password authentication failed`
-
-`.env.example` 的預設值假設本機 Postgres 免密碼。有設帳密就改成完整格式：
-
+```text
+PERSISTENCE_DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/agent_architecture_test
 ```
-PERSISTENCE_DATABASE_URL=postgresql://使用者:密碼@localhost:5432/agent_architecture
+
+`YOUR_PASSWORD` 必須換成真實密碼，但不能提交到 Git。
+
+### `KeyError: 'PERSISTENCE_DATABASE_URL'`
+
+確認 `.env` 位於 repository 根目錄，而且含有該變數：
+
+```powershell
+Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+Test-Path -LiteralPath '.env'
+Select-String -LiteralPath '.env' -Pattern '^PERSISTENCE_DATABASE_URL='
 ```
+
+第二個指令會顯示整行連線字串，可能包含密碼；只在自己的 terminal 查看，不要貼到 issue、文件或截圖。
+
+### `extension "vector" is not available`
+
+代表 PostgreSQL 已安裝，但目前 server 找不到 pgvector extension。先在 pgAdmin Query Tool 查：
+
+```sql
+SELECT version();
+SHOW config_file;
+SELECT * FROM pg_available_extensions WHERE name = 'vector';
+```
+
+本機已使用 PostgreSQL 18.6 與 pgvector 0.8.6 驗證成功。若查不到 `vector`，要確認 pgvector 安裝檔放入的是同一套 PostgreSQL 18，而不是另一個版本的目錄。
 
 ## Ollama
 
-### `ollama pull` 說 could not connect
+### `ollama` 指令找不到
 
-daemon 沒起來。`ollama pull` 是打去 `localhost:11434` 的 client 指令，不會自己啟動 server：
-
-```bash
-brew services start ollama    # 或另開 terminal 跑 ollama serve
+```powershell
+$env:PATH = 'C:\Users\User\AppData\Local\Programs\Ollama;' + $env:PATH
+ollama --version
 ```
 
-### `honcho start` 時 ollama 那行立刻掛掉
+### `ollama pull` 或 LiteLLM 無法連到 11434
 
-port 11434 已經被 `brew services` 起的 Ollama 佔用了。二選一：把 [Procfile](../Procfile) 的 `ollama:` 那行註解掉（推薦，daemon 讓 brew 管），或 `brew services stop ollama` 讓 honcho 自己起。
+`ollama pull` 是 client 指令，必須先有 Ollama server：
+
+```powershell
+$env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
+ollama serve
+```
+
+如果改由 Honcho 啟動，就不要另外執行 `ollama serve`。
+
+### Honcho 的 `ollama` process 一啟動就失敗
+
+通常是 Windows 背景版 Ollama 已占用 11434：
+
+```powershell
+Get-NetTCPConnection -State Listen -LocalPort 11434 -ErrorAction SilentlyContinue |
+    Select-Object LocalAddress, LocalPort, OwningProcess
+```
+
+用 `Get-Process -Id <PID>` 確認後，二選一：關閉背景 Ollama，讓 Procfile 管理；或另行規劃不重複啟動 Ollama 的 Procfile。不要直接啟動兩份。
+
+### `ollama list` 看不到已下載模型
+
+這台電腦把模型放在 D 槽。新的 PowerShell 若沒設定 `OLLAMA_MODELS`，Ollama 可能讀到預設 C 槽目錄：
+
+```powershell
+$env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
+ollama list
+```
+
+預期至少看到 `qwen2.5:3b` 與 `bge-m3`。
 
 ## LiteLLM Gateway
 
-### `curl localhost:4000/v1/models` 連不上
+### 4000 沒有 listener
 
-litellm 沒起來或啟動失敗。看 honcho 那個 terminal 裡 `litellm` 前綴的 log——最常見是 `gateway/config.yaml` 有 YAML 語法錯，或 `GEMINI_API_KEY` 沒設（config 裡 `os.environ/GEMINI_API_KEY` 解不出來）。
+先看第一個 Honcho terminal 的 `litellm` log。確認 11434 已啟動、[gateway/config.yaml](../gateway/config.yaml) 能載入。
 
-### 呼叫 gemini 系列模型噴 401 / API key not valid
-
-`.env` 的 `GEMINI_API_KEY` 是空的或無效。改完要**重啟 honcho**——litellm 是啟動時讀環境變數，不會熱更新。
-
-### `gemini-3.1-pro-preview` 404
-
-preview tag 有可能被下架。`gateway/config.yaml` 的註解裡列了替代方案（`gemini-2.5-pro` 是非 preview 的穩定版）。相關取捨見 [GitHub Issue #21](https://github.com/donydony228/agent-architecture/issues/21)。
-
-## 跑 workflow
-
-### 除外責任場景 check 查不到任何條文、`matched_articles` 永遠是空的
-
-保單條款沒灌進長期記憶。這是這個場景的必要前置，跑之前要先做一次：
-
-```bash
-uv run python -m scripts.seed_insurance_memory
+```powershell
+Test-NetConnection -ComputerName 127.0.0.1 -Port 4000 -InformationLevel Quiet
 ```
 
-### 事件驅動模式觸發後沒有任何反應
+### `/v1/models` 有 alias，但呼叫仍失敗
 
-`honcho -f Procfile.workers start` 那批沒起來——master/worker 不在 [Procfile](../Procfile) 裡，是另一份 [Procfile.workers](../Procfile.workers)，要另開 terminal 跑。
+`/v1/models` 只證明 alias 已載入，不證明 provider credential 或底層服務可用。
 
-### 換了 `WORKFLOW_DEF_PATH` 但行為沒變
+- `local-qwen`：確認 Ollama 與 `qwen2.5:3b`。
+- `local-embed`：確認 Ollama 與 `bge-m3`。
+- `breeze-asr`：確認 8001 與 Breeze 模型環境。
+- `claude-haiku`：需要有效 `ANTHROPIC_API_KEY`。
+- `gemini-cheap` / `gemini-strong`：需要有效 `GEMINI_API_KEY`。
 
-那是**啟動時**讀的，不是每次請求。兩批 honcho（常駐服務 + workers）都要帶著同一個值重啟才會生效。
+目前沒有 Anthropic / Gemini key，因此雲端 alias 保留但不可實際使用；不要填假 credential。
 
-### smoke test 有些情境莫名其妙失敗
+## STT / Breeze-ASR-25
 
-`honcho -f Procfile.workers start` 還開著。那批 process 的 consumer group 跟測試同名，會搶走測試的命令，讓測試裡用假 handler 的情境被真 handler 接走。跑 smoke test 前先關掉它。
+### 8001 能啟動，但第一次轉錄失敗或長時間等待
 
-## 殘留 process
+Port listener 只代表 FastAPI process 已啟動，不代表 Breeze 權重與推論 backend 已就緒。這台電腦目前：
 
-`Ctrl+C` 沒清乾淨、下次啟動撞 port 的話，清理指令見 [README 的「關閉」](../README.md#關閉)。
+- Breeze-ASR-25 權重尚未下載完成。
+- `.venv` 是 `torch 2.13.0+cpu`。
+- `torch.cuda.is_available()` 是 `False`。
+
+因此完整 STT 尚未驗證。下一階段需要先確認相容的 CUDA / PyTorch 組合與 6 GB VRAM 下的模型執行策略，再下載模型；本文件不把未執行過的安裝命令當成既定答案。
+
+## Workflow 選擇與 event-driven workers
+
+### 改了 `--workflow-def`，Runtime 行為沒有變
+
+Agent Runtime 與 workers 是在啟動時讀 `WORKFLOW_DEF_PATH`。trigger 的 `--workflow-def` 不會熱切換它們。
+
+```powershell
+$env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
+```
+
+兩批 Honcho 都要在各自的 PowerShell 設定相同值後重啟。
+
+### trigger 印出 thread_id，但 workflow 沒有推進
+
+先確認：
+
+1. `Procfile.workers` 那批 process 已啟動。
+2. `master` 與 `worker-all` 沒有錯誤。
+3. 兩批 process 的 `WORKFLOW_DEF_PATH` 相同。
+4. `PERSISTENCE_DATABASE_URL` 指向同一個可連線資料庫。
+5. `orchestrator_runs` 是否停在某個 `current_step`。
+
+### `stt_exclusion_notify` 查不到條文
+
+這是上游場景的必要前置，原作者流程要求先執行：
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.seed_insurance_memory
+```
+
+但這個 workflow 目前仍依賴 Anthropic / Gemini key，本機尚未完成無雲端金鑰改造與端到端驗證；保留此步驟作為上游功能參考。
+
+## Smoke test
+
+### `gather_concurrency_smoke_test.py` 失敗
+
+目前已知失敗：測試預期不通知時是 `["no notification needed"]`，但 [llm/notify_agent.py](../llm/notify_agent.py) 的安全短路已回傳 `[]`。這是測試預期落後於程式行為；本文件階段不修改測試。
+
+### Smoke test 偶發收到錯的事件
+
+跑測試前先關閉 `Procfile.workers`，因為常駐 worker 與測試可能使用相同 consumer group，會互相搶事件。
+
+完整測試矩陣與前置條件見 [testing.md](testing.md)。
+
+## 原作者 macOS / Bash 參考（未於目前 Windows 環境重驗）
+
+以下內容只保留上游操作脈絡，不是 Windows 指令：
+
+```bash
+brew install postgresql@14
+brew services start postgresql@14
+createdb agent_architecture
+psql agent_architecture -c "CREATE EXTENSION vector;"
+
+brew install ollama
+brew services start ollama
+ollama pull qwen2.5:3b
+ollama pull bge-m3
+
+export WORKFLOW_DEF_PATH=workflows/definitions/stt_exclusion_notify.yaml
+uv run honcho start
+uv run honcho -f Procfile.workers start
+```
+
+pgvector 在 Homebrew PostgreSQL 的原始碼編譯背景與歷史決策仍保留在 [long-term-memory-plan.md](long-term-memory-plan.md)。Windows 使用者不要直接執行 `brew`、`make`、`lsof` 或 `/opt/homebrew` 路徑。

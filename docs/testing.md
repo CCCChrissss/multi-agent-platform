@@ -1,19 +1,33 @@
 # 驗證
 
-沒有 pytest，全部是手動跑的 smoke test，分兩層：
+專案主要使用可直接執行的 smoke test，而不是 pytest。以下先列 Windows / PowerShell 的目前驗證路徑；服務與模型現況見 [current-windows-status.md](current-windows-status.md)。
+
+> [!IMPORTANT]
+> commit `39d6449` 的 GitHub Actions 中，`windows-static-compatibility` 與 `mcp-server-smoke-tests` 成功，`gather-concurrency-smoke-test` 失敗。失敗原因是測試仍預期不通知時回傳 `["no notification needed"]`，目前實作回傳 `[]`。這是已重現的測試預期落差，本次文件階段不修改程式或測試。
+
+## 服務停止時先跑的檢查
+
+在 repository 根目錄：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/static_compat_check.py
+.\.venv\Scripts\python.exe -m services.stt.temp_audio_smoke_test
+```
+
+第一項檢查 Python 語法、編碼、設定引用與 Markdown 連結；第二項檢查 Windows 暫存音檔行為。它們不會啟動服務，也不會驗證資料庫、模型或完整 workflow。
 
 ## 單一 MCP server（秒級回饋）
 
 新增/修改一個 MCP server 時最先該跑的一層——直接用 `mcp_servers/base_client.py` 的
 `MCPClient` 連上該 server 的 stdio 子行程，**不碰 LLM、不碰 agent、不碰 gateway**：
 
-```bash
-uv run python -m mcp_servers.stt.smoke_test
-uv run python -m mcp_servers.format_check.smoke_test
-uv run python -m mcp_servers.lookup.smoke_test
-uv run python -m mcp_servers.notified.smoke_test
-uv run python -m mcp_servers.calc.smoke_test
-uv run python -m mcp_servers.memory.smoke_test    # 唯一需要 Postgres 的一份，見下
+```powershell
+.\.venv\Scripts\python.exe -m mcp_servers.stt.smoke_test
+.\.venv\Scripts\python.exe -m mcp_servers.format_check.smoke_test
+.\.venv\Scripts\python.exe -m mcp_servers.lookup.smoke_test
+.\.venv\Scripts\python.exe -m mcp_servers.notified.smoke_test
+.\.venv\Scripts\python.exe -m mcp_servers.calc.smoke_test
+.\.venv\Scripts\python.exe -m mcp_servers.memory.smoke_test
 ```
 
 每份至少驗三件事：(1) 工具清單與參數 schema 符合預期、(2) 正常輸入回正確結構、(3) 壞輸入
@@ -35,17 +49,17 @@ uv run python -m mcp_servers.memory.smoke_test    # 唯一需要 Postgres 的一
 
 ## 端到端（分鐘級，燒真的 LLM）
 
-```bash
-uv run python -m event_bus.smoke_test        # event bus 本身：pub/sub、當機重派、NOTIFY 延遲
-uv run python -m orchestrator.smoke_test     # 編排層：單步、全鏈路、needs_review 短路、當機復原、重複發布
-uv run python -m workflows.parity_check      # 兩種模式對同一份輸入產出相同結果與 call_log 形狀
+```powershell
+.\.venv\Scripts\python.exe -m event_bus.smoke_test
+.\.venv\Scripts\python.exe -m orchestrator.smoke_test
+.\.venv\Scripts\python.exe -m workflows.parity_check
 ```
 
 - `event_bus.smoke_test` 只需要 Postgres，不碰 LLM。
 - 後兩個需要 `honcho start` 已經在跑（它們會呼叫真的 LLM 與 agent service）。
 - 三個都會在 process 內自己起需要的 master/worker。
 - ⚠️ **跑之前要先關掉 `honcho -f Procfile.workers start`**——那批 process 的 consumer group 跟測試同名，會搶走測試的命令，讓用假 handler 的情境失效。
-- `gather_concurrency_smoke_test.py`（repo 根目錄）是唯一不需要任何 process 在跑的：純 mock，`uv run python gather_concurrency_smoke_test.py` 即可，也接進了 CI（[../.github/workflows/ci.yml](../.github/workflows/ci.yml)）。
+- `gather_concurrency_smoke_test.py`（repo 根目錄）不需要任何 process：`.\.venv\Scripts\python.exe -B gather_concurrency_smoke_test.py`。目前會在 notified scenario 因上述預期值落差失敗；不要把它記成已通過。
 
 寫一個新工具卻要跑完整條 agent 鏈路才知道對不對，回饋迴路太長，而且工具本身的問題（回傳結構
 錯、壞輸入漏 traceback）會被 LLM 的不確定性蓋掉——這是上面那層單一 MCP server smoke test存在
@@ -54,15 +68,15 @@ uv run python -m workflows.parity_check      # 兩種模式對同一份輸入產
 
 長期記憶本身的正確性（`recall()`/`browse()`/`remember()`、status gate、稽核日誌）：
 
-```bash
-uv run python -m persistence.memory_smoke_test
+```powershell
+.\.venv\Scripts\python.exe -m persistence.memory_smoke_test
 ```
 
 只需要 `honcho start` 在跑（會呼叫真的 embedding），不需要 `Procfile.workers`。
 
-## 記憶蒸餾 pipeline（P0-P5）手動試跑
+## 記憶蒸餾 pipeline（P0-P5，上游流程；Windows 尚未重新驗證）
 
-[knowledge-distillation-plan.md](knowledge-distillation-plan.md) 的 episodic -> 候選 procedural 規則 -> 人工審核 -> 生效整條鏈路，依序手動跑一次的指令。只需要 `honcho start` 在跑，不需要 `Procfile.workers`（這條鏈路不經過事件驅動編排）。全部針對 `stt_exclusion_notify/check` 這個 scope。
+[knowledge-distillation-plan.md](knowledge-distillation-plan.md) 的 episodic -> 候選 procedural 規則 -> 人工審核 -> 生效整條鏈路。以下保留原作者的完整步驟與 Bash 寫法，尚未在目前 Windows / 無 Anthropic / Gemini key 的環境重新驗證。`stt_exclusion_notify` 仍依賴雲端 provider，因此現在不要把這一節當成本機可執行的 happy path。
 
 ```bash
 # 1. 保單條款灌進長期記憶（check 查證據用，不做過就是空的）

@@ -1,6 +1,6 @@
 # docs/ 文件索引
 
-每份文件在做什麼、什麼時候該看。安裝步驟本身在專案根目錄的 [README.md](../README.md)，這裡只收設計/機制文件。
+每份文件在做什麼、什麼時候該看。現在以 Windows / PowerShell / Codex 為主要操作環境；先讀 [current-windows-status.md](current-windows-status.md)，再依需求進入安裝、測試或架構文件。
 
 文件中的 `donydony228/agent-architecture` issue 連結是移植前的歷史決策來源；新的待辦與
 修改只追蹤在 [本 repository issues](https://github.com/CCCChrissss/multi-agent-platform/issues)。
@@ -9,11 +9,19 @@
 
 | 文件 | 在講什麼 |
 |---|---|
-| [onboarding.md](onboarding.md) | 接手新人看的：跟著 `stt_check_notify` 一次真實執行，從 workflow 定義 YAML 一路追到最底層的 MCP 呼叫，八步走完分層架構圖全部六層 |
-| [setup.md](setup.md) | 安裝疑難排解——根目錄 README 的「從零開始安裝」是 happy path，這份收實際會卡住的地方（pgvector 編譯、Postgres 連線、Ollama 撞 port） |
-| [windows-setup.md](windows-setup.md) | Windows / PowerShell 的安裝與操作對照，包含 Python 3.11、port 檢查和安裝前可跑的相容性檢查 |
-| [testing.md](testing.md) | 怎麼驗證改動：沒有 pytest，全部是手動跑的 smoke test，分「單一 MCP server」跟「完整 pipeline」兩層，含記憶蒸餾 pipeline 的手動試跑步驟 |
+| [current-windows-status.md](current-windows-status.md) | **目前唯一實機狀態基準**：已安裝、曾驗證、目前停止、尚未驗證、模型缺口與 CI 已知失敗 |
+| [onboarding.md](onboarding.md) | 接手新人看的程式追蹤路徑；完整語音執行尚未在目前 Windows 環境重驗 |
+| [windows-setup.md](windows-setup.md) | Windows / PowerShell 從零安裝、五個服務、workflow 選擇、workers、trigger、thread_id、log 與排查 |
+| [setup.md](setup.md) | Windows 優先的疑難排解：CP950、PostgreSQL、Ollama D 槽模型、LiteLLM、Breeze、workflow 與 tests |
+| [testing.md](testing.md) | smoke test 分層、前置條件、目前 GitHub Actions 結果，以及尚未在 Windows 重驗的上游測試流程 |
 | [observability.md](observability.md) | 怎麼查一次執行的稽核歷史/執行狀態，Postgres 各張表存什麼、`store` 跟 checkpoint 的差別 |
+
+## 文件狀態規則
+
+- 操作指令若標示 Windows / PowerShell，應以目前 repository 與本機驗證結果為準。
+- 標示「上游流程」「歷史計畫」「尚未在 Windows 重驗」的內容保留原作者脈絡，不代表目前可以直接執行。
+- `AGENTS.md` 是現行 Codex 協作規範；`CLAUDE.md` 只保留舊 Claude Code 工具的相容提示。
+- 每完成一個可驗證階段，再更新狀態文件與相應操作手冊，不預先把未做事項寫成已完成。
 
 ## 平台核心設計
 

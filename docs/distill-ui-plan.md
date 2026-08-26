@@ -1,5 +1,8 @@
 # 記憶蒸餾審核 UI：現況與驗收契約
 
+> [!NOTE]
+> 本文件保留功能設計與既有驗收契約；Demo UI 尚未在目前 Windows / PowerShell 環境重新執行。現行實機狀態見 [current-windows-status.md](current-windows-status.md)。
+
 本文件描述 [demo/index.html](../demo/index.html) 與 [demo/api.py](../demo/api.py) 已落地的
 memory review UI。核心記憶語意仍以 [knowledge-distillation-plan.md](knowledge-distillation-plan.md)
 和 [long-term-memory-plan.md](long-term-memory-plan.md) 為準；UI 只把既有 CLI 流程搬到

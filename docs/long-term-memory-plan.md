@@ -1,5 +1,8 @@
 # 長期記憶（Long-Term Memory）導入計畫
 
+> [!NOTE]
+> 這是長期記憶的歷史設計與落地紀錄，包含原作者 macOS 環境的驗證內容。PostgreSQL / pgvector / `local-embed` 的目前 Windows 實機狀態見 [current-windows-status.md](current-windows-status.md)。
+
 ## 0. 這份文件在回答什麼
 
 1. LangChain/LangGraph 講的「長期記憶」具體會存哪些東西、用什麼資料結構存。

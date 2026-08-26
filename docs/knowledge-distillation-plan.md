@@ -1,5 +1,8 @@
 # 知識蒸餾與品質關卡（M5）實作評估
 
+> [!NOTE]
+> 這是知識蒸餾的設計與階段性驗證紀錄。相關 CLI / Demo UI 尚未在目前 Windows、無 Anthropic / Gemini key 的環境重新完整驗證；現行狀態見 [current-windows-status.md](current-windows-status.md)。
+
 ## 0. 這份文件在回答什麼
 
 [docs/long-term-memory-plan.md](long-term-memory-plan.md) M3 落地之後，寫入端只做到「每次成功執行 → 逐筆存一則 episodic」，而且是純機械式欄位擷取（[orchestrator/memory_writer.py](../orchestrator/memory_writer.py) 的 `_apply_rule()`）。真正想要的閉環是：
