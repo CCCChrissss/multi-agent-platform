@@ -186,9 +186,13 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 
 ## Smoke test
 
-### `gather_concurrency_smoke_test.py` 失敗
+### `gather_concurrency_smoke_test.py` 在 commit `39d6449` 失敗
 
-目前已知失敗：測試預期不通知時是 `["no notification needed"]`，但 [llm/notify_agent.py](../llm/notify_agent.py) 的安全短路已回傳 `[]`。這是測試預期落後於程式行為；本文件階段不修改測試。
+原因不是正式輸出應改回舊字串，而是 gather scenario 使用 `should_notify=false` 後會在任何並行工作前直接回傳 `[]`，已經測不到原本要驗證的 concurrency。2026-08-27 本機已把該 scenario 改成 `should_notify=true` 並模擬成功 tool call，三個 gather scenario 全部通過；負分支安全短路則由 `llm.notify_agent_smoke_test` 獨立驗證。新的遠端 CI 結果要等修正 push 後確認。
+
+### MCP smoke test 在 Windows 報 uv cache 初始化失敗
+
+如果錯誤指向 `C:\Users\User\AppData\Local\uv\cache`，代表 MCP SDK 的 stdio 子行程沒有繼承目前 PowerShell 的 `UV_CACHE_DIR`。這不是 MCP server assertion 失敗。使用 [testing.md](testing.md#windows-d-槽-uv-cache-注意事項) 的一次性 wrapper 明確把 D 槽 cache 傳給子行程；production 層的正式修正留待獨立階段處理。
 
 ### Smoke test 偶發收到錯的事件
 

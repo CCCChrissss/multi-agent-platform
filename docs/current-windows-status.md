@@ -2,9 +2,9 @@
 
 本文件是目前 Windows / PowerShell 開發環境的操作基準。其他文件若與這裡衝突，先以本文件為準，再回頭確認程式碼與 Git 歷史。
 
-- 檢查日期：2026-08-26
+- 檢查日期：2026-08-27
 - 分支：`codex/windows-local-stack-setup`
-- 基準 commit：`39d6449`
+- 本次修正前基準 commit：`ef345af`
 - 開發工具：Codex Desktop + VS Code + PowerShell
 - 專案目錄：`D:\Projects\multi-agent平台架設\multi-agent-platform`
 
@@ -75,7 +75,7 @@ LiteLLM 的 alias 仍保留在 [gateway/config.yaml](../gateway/config.yaml)：
 - PostgreSQL 的 `orchestrator_runs`、checkpoint 與 `call_log` 查詢流程曾驗證可用。
 - Windows 靜態相容性 GitHub Actions job 在 commit `39d6449` 通過。
 
-## 已知測試問題
+## 測試狀態
 
 commit `39d6449` 的最新 GitHub Actions 結果為失敗，但不是三個 job 全部失敗：
 
@@ -83,7 +83,18 @@ commit `39d6449` 的最新 GitHub Actions 結果為失敗，但不是三個 job 
 - `mcp-server-smoke-tests`：成功
 - `gather-concurrency-smoke-test`：失敗
 
-失敗原因已在本機重現：`gather_concurrency_smoke_test.py` 仍預期不通知時回傳 `["no notification needed"]`，目前實作實際回傳 `[]`。這是測試預期值落後於已採用的安全短路行為；本次文件階段不修改測試或程式。
+失敗原因已在本機重現並修正測試：舊 gather scenario 用 `should_notify=false`，因此安全短路後根本不會進入要測的 `asyncio.gather()`。現在改用 `should_notify=true`、模擬一次成功 Gmail tool call，實際驗證 prompt recall 與 tool list 並行；獨立的 `llm.notify_agent_smoke_test` 繼續負責驗證負分支回傳 `[]` 且不碰 LLM / tool。
+
+2026-08-27 本機結果：
+
+- `gather_concurrency_smoke_test.py`：通過（三個 scenario）
+- `llm.notify_agent_smoke_test`：通過（三個 scenario）
+- 五個 dependency-free MCP smoke tests：通過
+- `scripts/static_compat_check.py`：通過
+
+遠端 GitHub Actions 仍要等本次修正 commit / push 後才能判定，現在不能宣稱新的 CI run 已成功。
+
+Windows 本機另發現一個測試啟動限制：MCP SDK 的 stdio 預設環境白名單不包含 `UV_CACHE_DIR`，所以子行程可能退回無效的 C 槽 uv cache。這次以一次性 wrapper 明確傳入 `D:\Projects\multi-agent平台架設\.uv-cache` 完成測試；production code 尚未修改，後續應獨立處理。
 
 GitHub Actions 執行紀錄：[run 32950383731](https://github.com/CCCChrissss/multi-agent-platform/actions/runs/32950383731)。
 

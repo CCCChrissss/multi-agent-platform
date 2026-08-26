@@ -14,6 +14,7 @@ i.e. the refactor from sequential awaits didn't reorder anything.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import types
 from unittest.mock import AsyncMock, patch
@@ -29,6 +30,12 @@ async def _slow(value):
 def _message(*, content: str | None = None, tool_calls=None) -> types.SimpleNamespace:
     return types.SimpleNamespace(
         choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=content, tool_calls=tool_calls))]
+    )
+
+
+def _tool_call(call_id: str, name: str, arguments: dict) -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        type="function", id=call_id, function=types.SimpleNamespace(name=name, arguments=json.dumps(arguments))
     )
 
 
@@ -68,26 +75,50 @@ async def scenario_notified_agent_gather() -> None:
 
     gateway = AsyncMock()
     gateway.list_openai_tools = _tools
+    gateway.call_tool = AsyncMock(return_value=("sent", False))
+
+    responses = [
+        _message(
+            tool_calls=[
+                _tool_call(
+                    "notify-1",
+                    "send_gmail_message",
+                    {"subject": "台積電通知", "body": "台積電本季營收創新高"},
+                )
+            ]
+        ),
+        _message(content="notification sent"),
+    ]
+
+    def fake_chat_with_tools(*args, **kwargs):
+        return responses.pop(0)
 
     with (
         patch.object(m, "inject_procedural", lambda *a, **k: _slow("system prompt")),
         # See scenario_tsmc_judge_gather()'s comment -- same reason.
-        patch("harness.agent_loop.chat_with_tools", lambda *a, **k: _message(content="no notification needed")),
+        patch("harness.agent_loop.chat_with_tools", fake_chat_with_tools),
     ):
         start = time.monotonic()
         log = await m.decide_and_notify(
             gateway,
-            should_notify=False,
-            subject="",
-            body="今天台北下雨",
+            should_notify=True,
+            subject="台積電通知",
+            body="台積電本季營收創新高",
             recipient_id="default",
+            model="local-qwen",
+            system_prompt="system prompt",
+            user_prompt="user prompt",
             store=None,
             memory_policy=None,
             tenant="default",
         )
         elapsed = time.monotonic() - start
 
-    assert log == ["no notification needed"], log
+    assert not responses, "not all mocked turns were consumed"
+    assert len(log) == 2, log
+    assert "send_gmail_message" in log[0] and "[ERROR]" not in log[0], log
+    assert log[1] == "notification sent", log
+    gateway.call_tool.assert_awaited_once()
     assert elapsed < DELAY * 2, f"expected ~{DELAY}s (concurrent), took {elapsed:.2f}s -- looks sequential"
     print(f"[notified_agent_gather] OK -- prompt recall + tool list ran concurrently ({elapsed:.2f}s)")
 

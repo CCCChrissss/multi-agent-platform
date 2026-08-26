@@ -411,7 +411,7 @@ uv run python -m orchestrator.trigger \
 
 ⚠️ 跑前先關掉 `honcho -f Procfile.workers start`（consumer group 撞名，會搶走測試的命令）。各支的前置條件、記憶蒸餾 pipeline（P0-P5）手動試跑步驟，見 [docs/testing.md](docs/testing.md)。
 
-目前 CI 的 `gather-concurrency-smoke-test` 有一個已知失敗：測試仍預期不通知時回傳 `["no notification needed"]`，實作現在回傳 `[]`。這個文件階段只記錄現況，不修改測試或行為；其他已驗證狀態見 [docs/current-windows-status.md](docs/current-windows-status.md)。
+commit `39d6449` 的 CI 曾因過時的 notified gather scenario 失敗。本機已把該 scenario 改成真正進入 `should_notify=true` 的並行路徑，並通過 gather、notify-agent、五個 dependency-free MCP smoke tests 與靜態檢查；新的遠端 GitHub Actions 結果仍要等本次修正 push 後確認。詳見 [docs/current-windows-status.md](docs/current-windows-status.md)。
 
 ---
 

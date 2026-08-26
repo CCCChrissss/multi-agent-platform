@@ -3,7 +3,7 @@
 專案主要使用可直接執行的 smoke test，而不是 pytest。以下先列 Windows / PowerShell 的目前驗證路徑；服務與模型現況見 [current-windows-status.md](current-windows-status.md)。
 
 > [!IMPORTANT]
-> commit `39d6449` 的 GitHub Actions 中，`windows-static-compatibility` 與 `mcp-server-smoke-tests` 成功，`gather-concurrency-smoke-test` 失敗。失敗原因是測試仍預期不通知時回傳 `["no notification needed"]`，目前實作回傳 `[]`。這是已重現的測試預期落差，本次文件階段不修改程式或測試。
+> commit `39d6449` 的 GitHub Actions 中，`windows-static-compatibility` 與 `mcp-server-smoke-tests` 成功，`gather-concurrency-smoke-test` 失敗。2026-08-27 已在本機修正過時的 gather scenario 並通過相關測試；新的遠端 CI 結果仍要等本次修正 push 後確認。
 
 ## 服務停止時先跑的檢查
 
@@ -29,6 +29,33 @@
 .\.venv\Scripts\python.exe -m mcp_servers.calc.smoke_test
 .\.venv\Scripts\python.exe -m mcp_servers.memory.smoke_test
 ```
+
+### Windows D 槽 uv cache 注意事項
+
+這台電腦的 MCP SDK stdio 子行程不會自動繼承 `UV_CACHE_DIR`，直接執行上面前五個測試可能退回 `C:\Users\User\AppData\Local\uv\cache` 並在 server 初始化前失敗。這是子行程環境問題，不是 MCP assertion 失敗。
+
+目前可用的一次性 PowerShell 驗證方式：
+
+```powershell
+$env:PYTHONUTF8 = '1'
+$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+$smokeModules = @(
+    'mcp_servers.stt.smoke_test',
+    'mcp_servers.format_check.smoke_test',
+    'mcp_servers.lookup.smoke_test',
+    'mcp_servers.notified.smoke_test',
+    'mcp_servers.calc.smoke_test'
+)
+
+foreach ($module in $smokeModules) {
+    $env:MCP_SMOKE_MODULE = $module
+    .\.venv\Scripts\python.exe -B -c "import asyncio, importlib, os; from mcp.client.stdio import get_default_environment; t=importlib.import_module(os.environ['MCP_SMOKE_MODULE']); env=get_default_environment(); env['UV_CACHE_DIR']=os.environ['UV_CACHE_DIR']; t._PARAMS.env=env; asyncio.run(t.main())"
+    if ($LASTEXITCODE -ne 0) { break }
+}
+Remove-Item Env:MCP_SMOKE_MODULE -ErrorAction SilentlyContinue
+```
+
+這個 wrapper 只調整測試子行程環境，不修改 production code。正式修法應另開 Windows tooling 階段評估，不在這次 CI 契約修正中順便擴張。
 
 每份至少驗三件事：(1) 工具清單與參數 schema 符合預期、(2) 正常輸入回正確結構、(3) 壞輸入
 回的是分類過的錯誤（`ToolInputError`/`ToolDependencyError`，見
