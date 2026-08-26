@@ -1,5 +1,8 @@
 # 泛用 Agent Runtime：讓 agent 的身分變成設定，而不是程式碼
 
+> [!NOTE]
+> 這是跨階段的架構設計與落地紀錄。內容中的歷史執行結果予以保留，但不等於目前 Windows 服務正在運行；現行狀態見 [current-windows-status.md](current-windows-status.md)。
+
 ## 1. 想解決的問題
 
 現在 `stt`、`check`、`notified` 是三個**寫死在程式碼裡的 agent**。要在平台上新增第四個 agent，得做這些事：

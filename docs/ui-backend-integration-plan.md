@@ -1,5 +1,8 @@
 # UI 與後端整合：現況與設計邊界
 
+> [!NOTE]
+> 本文件保留 repository 內已落地的介面契約；Demo UI 尚未在目前 Windows / PowerShell 環境重新執行。現行實機狀態見 [current-windows-status.md](current-windows-status.md)。
+
 這份文件依目前已落地的程式碼重建整合脈絡。原始規劃文件沒有隨上游內容完整保留，
 因此本文件描述的是 repository 目前可驗證的行為，不把歷史假設當成已實作功能。
 

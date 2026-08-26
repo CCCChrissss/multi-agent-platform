@@ -1,5 +1,8 @@
 # Event-Driven Multi-Agent Coordination 實作計劃
 
+> [!NOTE]
+> 這是原作者開發階段的設計／實作紀錄，不是現行操作手冊。架構脈絡予以保留；Windows 實際啟動與目前驗證範圍見 [windows-setup.md](windows-setup.md) 與 [current-windows-status.md](current-windows-status.md)。
+
 ## Context
 
 目前 `workflows/simple_pipeline.py` 是**單一 process 內的 LangGraph 同步執行**：三個 node（stt/check/notified）透過 `graph.ainvoke()` 依序在同一個 Python process 裡跑完，程式檔案開頭甚至直接寫「no Kafka」——這是刻意的初始設計，不是遺漏。

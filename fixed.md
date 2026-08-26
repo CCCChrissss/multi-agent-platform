@@ -1,5 +1,8 @@
 # Fixed（還沒做的事寫在 [TODO.md](TODO.md)）
 
+> [!NOTE]
+> 這是跨多個上游開發階段累積的修正紀錄，不是目前 Windows 啟動手冊。部分舊段落仍保留當時的 process 數量、port 與 macOS 驗證方式；現行實機狀態以 [docs/current-windows-status.md](docs/current-windows-status.md) 為準。
+
 之前記錄在 [TODO.md](TODO.md) 裡、後來已經修掉的問題，搬來這裡保留紀錄，避免和還沒解決的項目混在一起。分類與 [TODO.md](TODO.md) 一致，方便對照。
 
 ## 目錄

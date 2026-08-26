@@ -49,8 +49,3 @@ model_list:
       # of erroring. Scoped to this model only -- a bad param sent to any
       # other model should still raise, not get silently swallowed.
       drop_params: true
-
-litellm_settings:
-  # if a call to local-qwen fails (e.g. Ollama is down), retry against claude-haiku
-  # (was gemini-cheap -- see the claude-haiku model_list entry's comment)
-  fallbacks: [{"local-qwen": ["claude-haiku"]}]
