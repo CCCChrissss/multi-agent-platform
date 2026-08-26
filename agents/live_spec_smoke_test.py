@@ -53,7 +53,7 @@ steps:
 
 
 def _write(path: Path, text: str) -> None:
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
 
 
 def main() -> None:

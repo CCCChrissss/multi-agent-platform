@@ -31,7 +31,7 @@ class MemoryPolicy:
 
 
 def load_memory_policy(path: str) -> MemoryPolicy:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     memory_raw = raw.get("memory") or {}
     return MemoryPolicy(

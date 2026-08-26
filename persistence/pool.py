@@ -14,6 +14,9 @@ import os
 from dotenv import load_dotenv
 from psycopg_pool import AsyncConnectionPool
 
+from persistence.asyncio_compat import configure_asyncio_for_psycopg
+
+configure_asyncio_for_psycopg()
 load_dotenv()
 
 _shared: AsyncConnectionPool | None = None

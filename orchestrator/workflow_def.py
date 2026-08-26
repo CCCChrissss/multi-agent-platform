@@ -275,7 +275,7 @@ def _known_model_names(path: str) -> set[str]:
     load_workflow_def() cross-checks every step's `model:` against this set
     at load time (docs/generic-agent-runtime-plan.md P5), same "catch a typo
     at load time, not mid-run" posture as input_mapping's own checks."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     return {entry["model_name"] for entry in raw.get("model_list") or []}
 
@@ -303,7 +303,7 @@ def load_workflow_def_by_name(workflow_name: str) -> WorkflowDef:
 
 
 def load_workflow_def(path: str) -> WorkflowDef:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
     name = raw.get("name")

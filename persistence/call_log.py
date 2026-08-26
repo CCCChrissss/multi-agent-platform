@@ -25,6 +25,9 @@ import psycopg
 from dotenv import load_dotenv
 from psycopg.types.json import Jsonb
 
+from persistence.asyncio_compat import configure_asyncio_for_psycopg
+
+configure_asyncio_for_psycopg()
 load_dotenv()
 
 current_thread_id: ContextVar[str | None] = ContextVar("current_thread_id", default=None)

@@ -68,7 +68,7 @@ def _grant(raw: dict | None) -> Grant:
 
 
 def load_policy(path: str) -> Policy:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     return Policy(
         servers={name: ServerSpec(**spec) for name, spec in (raw.get("servers") or {}).items()},

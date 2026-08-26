@@ -79,7 +79,7 @@ async def main() -> None:
         total = 0
         for path in sorted(_DATA_DIR.glob("*.yaml")):
             product_id = path.stem
-            node = yaml.safe_load(path.read_text())
+            node = yaml.safe_load(path.read_text(encoding="utf-8"))
             count = await _seed_node(store, policy, ("insurance_product", product_id), node)
             print(f"[seed] {path.name} -> {count} item(s) under insurance_product/{product_id}")
             total += count

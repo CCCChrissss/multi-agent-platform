@@ -13,6 +13,9 @@ import os
 from dotenv import load_dotenv
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
+from persistence.asyncio_compat import configure_asyncio_for_psycopg
+
+configure_asyncio_for_psycopg()
 load_dotenv()
 
 

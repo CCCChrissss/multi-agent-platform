@@ -136,13 +136,15 @@ def main() -> None:
         print("[spec_writer] OK -- set_tools() replaces the grant with exactly the given set")
 
         # A broken write (invalid model name) must not touch the file at all.
-        before = path.read_text()
+        before = path.read_text(encoding="utf-8")
         try:
             sw.update_step(str(path), _NAME, model="not-a-real-model")
             raise AssertionError("expected SpecWriteError for an unknown model")
         except SpecWriteError:
             pass
-        assert path.read_text() == before, "a failed write must leave the original file byte-for-byte unchanged"
+        assert path.read_text(encoding="utf-8") == before, (
+            "a failed write must leave the original file byte-for-byte unchanged"
+        )
         assert not path.with_suffix(path.suffix + ".tmp").exists(), "a failed write must not leave a .tmp file behind"
         print("[spec_writer] OK -- an invalid write is rejected and the original file is untouched")
 
@@ -181,7 +183,7 @@ def main() -> None:
         # deletes that comment along with the key, even though the key
         # itself never had anything to do with it. Reproduced once while
         # building set_tools(); this guards against it coming back.
-        assert "Examples of the other two shapes" in sw._POLICY_PATH.read_text(), (
+        assert "Examples of the other two shapes" in sw._POLICY_PATH.read_text(encoding="utf-8"), (
             "create_agent()+delete_agent() must not delete an unrelated trailing comment in policy.yaml"
         )
         print("[spec_writer] OK -- a create+delete cycle doesn't strand-delete policy.yaml's trailing comment")

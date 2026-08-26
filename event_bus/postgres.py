@@ -57,6 +57,9 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from event_bus.base import Event, StartFrom
+from persistence.asyncio_compat import configure_asyncio_for_psycopg
+
+configure_asyncio_for_psycopg()
 
 
 def _channel_for_topic(topic: str) -> str:
