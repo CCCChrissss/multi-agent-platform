@@ -69,7 +69,7 @@ _NON_CHAT_MODEL_SUBSTRINGS = ("asr", "embed")
 
 
 def _chat_model_names() -> list[str]:
-    with open(_GATEWAY_CONFIG_PATH) as f:
+    with open(_GATEWAY_CONFIG_PATH, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     names = [entry["model_name"] for entry in raw.get("model_list") or []]
     return sorted(n for n in names if not any(s in n.lower() for s in _NON_CHAT_MODEL_SUBSTRINGS))

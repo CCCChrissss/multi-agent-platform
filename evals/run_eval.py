@@ -57,7 +57,7 @@ _POLICY_PATH = _REPO_ROOT / "mcp_servers" / "policy.yaml"
 
 
 def _load_cases() -> list[dict]:
-    with open(_CASES_PATH) as f:
+    with open(_CASES_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

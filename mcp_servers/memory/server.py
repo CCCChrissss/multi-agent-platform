@@ -29,6 +29,8 @@ import asyncio
 import json
 import os
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -37,8 +39,6 @@ from mcp_servers.tool_errors import ToolInputError, guarded_tool
 from persistence.call_log import current_node_name
 from persistence.memory import GLOBAL_TENANT, MemoryKind, browse, recall
 from persistence.memory_lifespan import open_agent_memory
-
-mcp = FastMCP("memory", log_level="WARNING")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _POLICY_PATH = _REPO_ROOT / "mcp_servers" / "policy.yaml"
@@ -57,10 +57,8 @@ def _log(line: str) -> None:
     print(line, file=sys.stderr, flush=True)
 
 
-# ponytail: process-lifetime singleton, never explicitly closed -- this
-# subprocess lives exactly as long as the gateway that spawned it, and exits
-# (dropping the connection) when the gateway does. Upgrade to an explicit
-# shutdown hook if this server ever needs to outlive its gateway.
+# Process-lifetime singleton, opened lazily on the first database-backed tool
+# call. FastMCP's lifespan below closes it before the event loop shuts down.
 _memory_cm = open_agent_memory(str(_POLICY_PATH))
 _store = None
 _memory_policy = None
@@ -73,6 +71,24 @@ async def _ensure_memory():
         if _store is None:
             _store, _memory_policy = await _memory_cm.__aenter__()
     return _store, _memory_policy
+
+
+@asynccontextmanager
+async def _server_lifespan(_: FastMCP) -> AsyncIterator[None]:
+    global _store, _memory_policy
+    try:
+        yield
+    finally:
+        async with _init_lock:
+            if _store is not None:
+                try:
+                    await _memory_cm.__aexit__(None, None, None)
+                finally:
+                    _store = None
+                    _memory_policy = None
+
+
+mcp = FastMCP("memory", log_level="WARNING", lifespan=_server_lifespan)
 
 
 @mcp.tool()

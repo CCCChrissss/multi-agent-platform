@@ -14,7 +14,9 @@ from dotenv import load_dotenv
 from langgraph.store.postgres.aio import AsyncPostgresStore
 
 from gateway.client import aembed
+from persistence.asyncio_compat import configure_asyncio_for_psycopg
 
+configure_asyncio_for_psycopg()
 load_dotenv()
 
 EMBED_MODEL = "local-embed"

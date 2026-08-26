@@ -123,26 +123,31 @@ def make_runtime_lifespan() -> Callable[[FastAPI], AsyncIterator[None]]:
         app.state.gateway_lock = asyncio.Lock()
 
         # Eager for the steps this process was started to serve, lazy for
-        # everything else (see get_agent) -- each connect() spawns a stdio
-        # subprocess per declared MCP server, so doing these sequentially
-        # would serialize every spawn on startup instead of bounding startup
-        # time by the slowest single connect().
+        # everything else (see get_agent). MCP's stdio transport owns an
+        # AnyIO cancel scope that must be closed by the same asyncio task that
+        # opened it, so keep eager connect()/close() in this lifespan task.
         eager = [name for name, spec in live.snapshot.steps.items() if spec.source == live.main_workflow_path]
         gateways = {name: MCPGateway(live.policy, principal=name) for name in eager}
-        await asyncio.gather(*(gateway.connect() for gateway in gateways.values()))
-        app.state.gateways.update(gateways)
-
-        # open_agent_memory() also returns a MemoryPolicy, ignored here: it
-        # would be a second, frozen-at-startup copy of what LiveSpec already
-        # reloads. Handlers read app.state.live_spec.memory_policy instead.
-        # The store itself is what this context manager is needed for (setup()
-        # + the one-time status backfill).
-        async with open_agent_memory(str(_POLICY_PATH)) as (store, _startup_memory_policy):
-            app.state.store = store
-            try:
-                yield
-            finally:
-                for gateway in app.state.gateways.values():
+        try:
+            for name, gateway in gateways.items():
+                try:
+                    await gateway.connect()
+                except BaseException:
                     await gateway.close()
+                    raise
+                app.state.gateways[name] = gateway
+
+            # open_agent_memory() also returns a MemoryPolicy, ignored here:
+            # it would be a second, frozen-at-startup copy of what LiveSpec
+            # already reloads. Handlers read
+            # app.state.live_spec.memory_policy instead. The store itself is
+            # what this context manager is needed for (setup() + the one-time
+            # status backfill).
+            async with open_agent_memory(str(_POLICY_PATH)) as (store, _startup_memory_policy):
+                app.state.store = store
+                yield
+        finally:
+            for gateway in reversed(tuple(app.state.gateways.values())):
+                await gateway.close()
 
     return lifespan
