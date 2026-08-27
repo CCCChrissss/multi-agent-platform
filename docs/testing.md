@@ -1,9 +1,9 @@
 # 驗證
 
-專案主要使用可直接執行的 smoke test，而不是 pytest。以下先列 Windows / PowerShell 的目前驗證路徑；服務與模型現況見 [current-windows-status.md](current-windows-status.md)。
+專案主要使用可直接執行的 smoke test，而不是 pytest。本文件同時提供 Windows / PowerShell 與 macOS / Bash 指令；Windows 服務與模型現況見 [current-windows-status.md](current-windows-status.md)。
 
 > [!IMPORTANT]
-> commit `39d6449` 的 GitHub Actions 中，`windows-static-compatibility` 與 `mcp-server-smoke-tests` 成功，`gather-concurrency-smoke-test` 失敗。2026-08-27 已在本機修正過時的 gather scenario 並通過相關測試；新的遠端 CI 結果仍要等本次修正 push 後確認。
+> commit `39d6449` 的 GitHub Actions 中，`windows-static-compatibility` 與 `mcp-server-smoke-tests` 成功，`gather-concurrency-smoke-test` 失敗。2026-08-27 已在本機修正過時的 gather scenario 並通過相關測試；最新遠端 GitHub Actions 尚未用 GitHub CLI 重查。
 
 ## 服務停止時先跑的檢查
 
@@ -28,6 +28,17 @@
 .\.venv\Scripts\python.exe -m mcp_servers.notified.smoke_test
 .\.venv\Scripts\python.exe -m mcp_servers.calc.smoke_test
 .\.venv\Scripts\python.exe -m mcp_servers.memory.smoke_test
+```
+
+macOS / Bash（原作者流程）：
+
+```bash
+uv run python -m mcp_servers.stt.smoke_test
+uv run python -m mcp_servers.format_check.smoke_test
+uv run python -m mcp_servers.lookup.smoke_test
+uv run python -m mcp_servers.notified.smoke_test
+uv run python -m mcp_servers.calc.smoke_test
+uv run python -m mcp_servers.memory.smoke_test
 ```
 
 ### Windows D 槽 uv cache 注意事項
@@ -82,11 +93,19 @@ Remove-Item Env:MCP_SMOKE_MODULE -ErrorAction SilentlyContinue
 .\.venv\Scripts\python.exe -m workflows.parity_check
 ```
 
+macOS / Bash（原作者流程）：
+
+```bash
+uv run python -m event_bus.smoke_test
+uv run python -m orchestrator.smoke_test
+uv run python -m workflows.parity_check
+```
+
 - `event_bus.smoke_test` 只需要 Postgres，不碰 LLM。
 - 後兩個需要 `honcho start` 已經在跑（它們會呼叫真的 LLM 與 agent service）。
 - 三個都會在 process 內自己起需要的 master/worker。
 - ⚠️ **跑之前要先關掉 `honcho -f Procfile.workers start`**——那批 process 的 consumer group 跟測試同名，會搶走測試的命令，讓用假 handler 的情境失效。
-- `gather_concurrency_smoke_test.py`（repo 根目錄）不需要任何 process：`.\.venv\Scripts\python.exe -B gather_concurrency_smoke_test.py`。目前會在 notified scenario 因上述預期值落差失敗；不要把它記成已通過。
+- `gather_concurrency_smoke_test.py`（repo 根目錄）不需要任何 process。Windows 用 `.\.venv\Scripts\python.exe -B gather_concurrency_smoke_test.py`，macOS 用 `uv run python gather_concurrency_smoke_test.py`。2026-08-27 已在 Windows 本機驗證修正後的三個 scenario 全部通過；此結論不等於最新遠端 CI 已重查。
 
 寫一個新工具卻要跑完整條 agent 鏈路才知道對不對，回饋迴路太長，而且工具本身的問題（回傳結構
 錯、壞輸入漏 traceback）會被 LLM 的不確定性蓋掉——這是上面那層單一 MCP server smoke test存在
@@ -97,6 +116,12 @@ Remove-Item Env:MCP_SMOKE_MODULE -ErrorAction SilentlyContinue
 
 ```powershell
 .\.venv\Scripts\python.exe -m persistence.memory_smoke_test
+```
+
+macOS / Bash：
+
+```bash
+uv run python -m persistence.memory_smoke_test
 ```
 
 只需要 `honcho start` 在跑（會呼叫真的 embedding），不需要 `Procfile.workers`。

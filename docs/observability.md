@@ -1,6 +1,6 @@
-# Windows 上觀察 workflow 執行結果
+# 觀察 workflow 執行結果
 
-Workflow 狀態與 Agent 內部的 LLM、MCP tool、memory 操作會寫入 PostgreSQL。開始前先確認 `.env` 的 `PERSISTENCE_DATABASE_URL` 指向你實際使用的資料庫；目前本機資料庫是 `agent_architecture_test`。
+Workflow 狀態與 Agent 內部的 LLM、MCP tool、memory 操作會寫入 PostgreSQL。開始前先確認 `.env` 的 `PERSISTENCE_DATABASE_URL` 指向你實際使用的資料庫；目前 Windows 實機資料庫是 `agent_architecture_test`，原作者 macOS 範例使用 `agent_architecture`。
 
 > [!NOTE]
 > 2026-08-26 五個常駐服務都已停止，完整語音 workflow 尚未跑通。以下查詢方式曾在本機資料庫驗證，但查到的可能是先前執行紀錄，不代表服務目前正在運作。
@@ -9,13 +9,23 @@ Workflow 狀態與 Agent 內部的 LLM、MCP tool、memory 操作會寫入 Postg
 
 事件驅動 trigger 成功送出時會直接印出 `thread_id`：
 
+Windows / PowerShell：
+
 ```powershell
 .\.venv\Scripts\python.exe -m orchestrator.trigger `
     --workflow-def workflows/definitions/stt_check_notify.yaml `
     --payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'
 ```
 
-如果當下沒有複製，可在 pgAdmin 4 的 `agent_architecture_test` 資料庫開啟 Query Tool：
+macOS / Bash：
+
+```bash
+uv run python -m orchestrator.trigger \
+  --workflow-def workflows/definitions/stt_check_notify.yaml \
+  --payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'
+```
+
+如果當下沒有複製，Windows 可在 pgAdmin 4 的 `agent_architecture_test` 資料庫開啟 Query Tool；macOS 可用 `psql agent_architecture` 或原本的 TablePlus / Postico 查詢同一段 SQL：
 
 ```sql
 SELECT thread_id, workflow_name, current_step, status, updated_at
@@ -28,8 +38,16 @@ LIMIT 5;
 
 在 repository 根目錄執行：
 
+Windows / PowerShell：
+
 ```powershell
 .\.venv\Scripts\python.exe -m persistence.history <thread_id>
+```
+
+macOS / Bash：
+
+```bash
+uv run python -m persistence.history <thread_id>
 ```
 
 輸出包含：
@@ -39,7 +57,7 @@ LIMIT 5;
 
 事件驅動模式的正式執行狀態保存在 `orchestrator_runs`。Master Agent 另外把狀態鏡射進 checkpoint 表，讓這個 CLI 能用同一種格式顯示同步與事件驅動模式；鏡射限制見 [long-term-memory-plan.md](long-term-memory-plan.md)。
 
-## 用 pgAdmin 查 workflow 狀態
+## 用資料庫工具查 workflow 狀態
 
 ### 最近執行
 

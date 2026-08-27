@@ -1,6 +1,6 @@
 # docs/ 文件索引
 
-每份文件在做什麼、什麼時候該看。現在以 Windows / PowerShell / Codex 為主要操作環境；先讀 [current-windows-status.md](current-windows-status.md)，再依需求進入安裝、測試或架構文件。
+每份文件在做什麼、什麼時候該看。文件目標是同時支援原作者的 macOS / Bash / Claude Code 流程，以及目前實機的 Windows / PowerShell / Codex 流程。Windows 使用者可先讀 [current-windows-status.md](current-windows-status.md)，再依需求進入安裝、測試或架構文件。
 
 文件中的 `donydony228/agent-architecture` issue 連結是移植前的歷史決策來源；新的待辦與
 修改只追蹤在 [本 repository issues](https://github.com/CCCChrissss/multi-agent-platform/issues)。
@@ -12,15 +12,15 @@
 | [current-windows-status.md](current-windows-status.md) | **目前唯一實機狀態基準**：已安裝、曾驗證、目前停止、尚未驗證、模型缺口與 CI 已知失敗 |
 | [onboarding.md](onboarding.md) | 接手新人看的程式追蹤路徑；完整語音執行尚未在目前 Windows 環境重驗 |
 | [windows-setup.md](windows-setup.md) | Windows / PowerShell 從零安裝、五個服務、workflow 選擇、workers、trigger、thread_id、log 與排查 |
-| [setup.md](setup.md) | Windows 優先的疑難排解：CP950、PostgreSQL、Ollama D 槽模型、LiteLLM、Breeze、workflow 與 tests |
-| [testing.md](testing.md) | smoke test 分層、前置條件、目前 GitHub Actions 結果，以及尚未在 Windows 重驗的上游測試流程 |
+| [setup.md](setup.md) | 雙平台疑難排解：Windows 的 CP950、PostgreSQL、D 槽模型與 Breeze，以及 macOS 原有的 Homebrew / pgvector / Ollama 排錯 |
+| [testing.md](testing.md) | Windows / PowerShell 與 macOS / Bash 的 smoke test 分層、前置條件、本機驗證狀態與上游測試流程 |
 | [observability.md](observability.md) | 怎麼查一次執行的稽核歷史/執行狀態，Postgres 各張表存什麼、`store` 跟 checkpoint 的差別 |
 
 ## 文件狀態規則
 
-- 操作指令若標示 Windows / PowerShell，應以目前 repository 與本機驗證結果為準。
-- 標示「上游流程」「歷史計畫」「尚未在 Windows 重驗」的內容保留原作者脈絡，不代表目前可以直接執行。
-- `AGENTS.md` 是現行 Codex 協作規範；`CLAUDE.md` 只保留舊 Claude Code 工具的相容提示。
+- 操作指令必須標明 Windows / PowerShell 或 macOS / Bash，不能用其中一種覆寫另一種。
+- Windows 指令以目前 repository 與本機驗證結果為準；標示「原作者流程」或「尚未重驗」的 macOS 內容繼續保留，但不宣稱由目前維護者實測通過。
+- `AGENTS.md` 是現行 Codex 協作規範；`CLAUDE.md` 保留原作者的平台目標與 Claude Code 專案脈絡。
 - 每完成一個可驗證階段，再更新狀態文件與相應操作手冊，不預先把未做事項寫成已完成。
 
 ## 平台核心設計

@@ -1,9 +1,9 @@
 # Multi-Agent Platform
 
-公司內部多 agent 平台的原型（平台目標與開發規範見 [AGENTS.md](AGENTS.md)）。平台上目前有**兩個示範 workflow**，用來驗證基礎建設堪不堪用，都是同一個形狀：語音轉文字 → 檢核 → 通知。
+公司內部多 agent 平台的原型（平台目標見 [CLAUDE.md](CLAUDE.md)，Codex 開發規範見 [AGENTS.md](AGENTS.md)）。平台上目前有**兩個示範 workflow**，用來驗證基礎建設堪不堪用，都是同一個形狀：語音轉文字 → 檢核 → 通知。
 
 > [!IMPORTANT]
-> 本 repository 現在以 **Windows / PowerShell / Codex** 為主要操作環境。2026-08-27 的實機安裝狀態、已驗證範圍與目前阻擋項目，請先看 [docs/current-windows-status.md](docs/current-windows-status.md)。Breeze-ASR-25 已完成 CUDA / FP16 直接載入與範例音檔轉錄；五個常駐服務目前均已停止，所以尚未宣稱完整語音 workflow 已在本機跑通。
+> 本 repository 同時保留原作者的 **macOS / Bash / Claude Code** 流程，並漸進新增目前實機的 **Windows / PowerShell / Codex** 流程。Windows 於 2026-08-27 的安裝狀態、已驗證範圍與阻擋項目見 [docs/current-windows-status.md](docs/current-windows-status.md)；macOS 內容保留上游操作方式，但尚未由目前維護者重新實機驗證。
 
 | | [stt_check_notify.yaml](workflows/definitions/stt_check_notify.yaml) | [stt_exclusion_notify.yaml](workflows/definitions/stt_exclusion_notify.yaml) |
 |---|---|---|
@@ -75,7 +75,9 @@ Service 層     services/{stt,notified}/  <------------------------+
 
 ---
 
-## Windows / PowerShell 從零開始
+## 從零開始安裝
+
+### Windows / PowerShell（目前實機驗證路徑）
 
 完整步驟與每一步的成功判斷統一維護在 [docs/windows-setup.md](docs/windows-setup.md)，錯誤分類見 [docs/setup.md](docs/setup.md)。以下只列目前這台電腦實際使用的路徑與最短入口。
 
@@ -93,11 +95,11 @@ Copy-Item .env.example .env  # 只有 .env 不存在時才執行；既有 .env �
 
 目前預設 workflow `stt_check_notify` 的三個 agent 決策模型都是 `local-qwen`，不需要 Anthropic / Gemini key；Breeze-ASR-25 已在這台電腦完成直接轉錄驗證。`stt_exclusion_notify` 尚未本機化，仍需要有效的 Anthropic / Gemini key。
 
-### 原作者 macOS / Bash 安裝參考（尚未於本機重驗）
+### macOS / Bash / Claude Code（原作者流程，尚未由目前維護者重驗）
 
 以下內容保留原作者的 macOS 操作脈絡，供上游差異比對；它不是目前 Windows 環境的直接操作指令。
 
-### 1. 專案本身
+#### 1. 專案本身
 
 需要 Python 3.11+ 與 [uv](https://docs.astral.sh/uv/)。
 
@@ -107,7 +109,7 @@ cd multi-agent-platform
 uv sync                      # 建 .venv 並裝好所有依賴（含 honcho、litellm）
 ```
 
-### 2. Postgres + pgvector
+#### 2. Postgres + pgvector
 
 checkpointer、呼叫紀錄、event bus、run state、長期記憶全都存這裡。
 
@@ -128,7 +130,7 @@ psql agent_architecture -c "\dx"
 >
 > 資料表**不用**手動建，各模組啟動時會自己 `CREATE TABLE IF NOT EXISTS`；只有 extension 這一步是手動的。
 
-### 3. 環境變數
+#### 3. 環境變數
 
 ```bash
 cp .env.example .env
@@ -143,7 +145,7 @@ cp .env.example .env
 
 每個模組都會自己 `load_dotenv()`，所以不用手動 export。
 
-### 4. Ollama 與本機模型
+#### 4. Ollama 與本機模型
 
 ```bash
 brew install ollama
@@ -162,11 +164,9 @@ ollama list
 
 > 用 `brew services` 讓 Ollama 常駐的話，要把 [Procfile](Procfile) 裡 `ollama:` 那行註解掉，不然下一步 `honcho start` 會撞 port 失敗。
 
-### 5. Breeze-ASR-25（Windows 本機已完成直接推論）
+#### 5. Breeze-ASR-25（自動）
 
-本機已安裝 `torch 2.13.0+cu132`，`torch.cuda.is_available()` 為 `True`，Breeze-ASR-25 快取放在 `D:\Projects\multi-agent平台架設\.hf-cache`。使用 RTX 4050 Laptop GPU 6 GB 對 `samples/gen_tsmc_01.wav` 直接推論成功，輸出「台積電今天股價創新高投資人非常關注」；峰值 CUDA allocated 約 4.09 GiB、reserved 約 4.51 GiB。
-
-`services/stt/breeze_asr.py` 使用已安裝的 `librosa` / `soundfile` 先轉成單聲道 16 kHz，所以這條 Windows 路徑不需要另裝 FFmpeg。此處只代表「直接模型推論」通過；8001、LiteLLM `breeze-asr` alias 與完整 workflow 仍要另行驗證。
+第一次跑 `stt` 時會自動從 Hugging Face 下載（需要網路，之後快取在本機），不用預先準備。第一次呼叫會因此慢很多。Windows 的已驗證 CUDA、D 槽快取與免 FFmpeg 設定請另見 [docs/windows-setup.md](docs/windows-setup.md)。
 
 ---
 
@@ -380,12 +380,20 @@ uv run python -m orchestrator.trigger \
 
 ---
 
-## Demo UI（保留功能；Windows 尚未實機驗證）
+## Demo UI
 
 不寫指令、用瀏覽器操作的替代介面：組裝/測試 agent、瀏覽 workflow 設定、觸發執行、審核 `memory-writer` 寫入的 `pending` 記憶（approve/reject）。
 
+Windows / PowerShell（尚未實機驗證）：
+
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn demo.api:app --port 8010
+```
+
+macOS / Bash（原作者流程）：
+
+```bash
+uv run uvicorn demo.api:app --port 8010
 ```
 
 啟動後直接用瀏覽器打開 [demo/index.html](demo/index.html)（本機檔案，不用另外起 static server——它是純前端，透過 CORS 打 `http://localhost:8010`）。需要上面 Postgres + `honcho start` 這批常駐服務已經在跑（catalog 讀 `gateway/config.yaml`、跑 workflow 打 8003 的 agent runtime）；要審核記憶則另外需要 `memory-writer`（`honcho -f Procfile.workers start`）先寫入過 `pending` 候選。
@@ -394,8 +402,16 @@ uv run python -m orchestrator.trigger \
 
 ## 觀察執行結果
 
+Windows / PowerShell：
+
 ```powershell
 .\.venv\Scripts\python.exe -m persistence.history <thread_id>
+```
+
+macOS / Bash：
+
+```bash
+uv run python -m persistence.history <thread_id>
 ```
 
 印每一步的 checkpoint 快照 + 每個 agent 內部的 LLM/tool 呼叫紀錄，兩種模式都可用。事件驅動模式怎麼直接查執行狀態、Postgres 各張表存什麼、`store` 跟 checkpoint 的差別，見 [docs/observability.md](docs/observability.md)。
@@ -404,7 +420,9 @@ uv run python -m orchestrator.trigger \
 
 ## 驗證
 
-專案主要使用可直接執行的 smoke test，而不是 pytest。PowerShell 指令如下：
+專案主要使用可直接執行的 smoke test，而不是 pytest。
+
+Windows / PowerShell：
 
 ```powershell
 .\.venv\Scripts\python.exe -m event_bus.smoke_test
@@ -413,15 +431,26 @@ uv run python -m orchestrator.trigger \
 .\.venv\Scripts\python.exe -m persistence.memory_smoke_test
 ```
 
+macOS / Bash：
+
+```bash
+uv run python -m event_bus.smoke_test
+uv run python -m orchestrator.smoke_test
+uv run python -m workflows.parity_check
+uv run python -m persistence.memory_smoke_test
+```
+
 ⚠️ 跑前先關掉 `honcho -f Procfile.workers start`（consumer group 撞名，會搶走測試的命令）。各支的前置條件、記憶蒸餾 pipeline（P0-P5）手動試跑步驟，見 [docs/testing.md](docs/testing.md)。
 
-commit `39d6449` 的 CI 曾因過時的 notified gather scenario 失敗。本機已把該 scenario 改成真正進入 `should_notify=true` 的並行路徑，並通過 gather、notify-agent、五個 dependency-free MCP smoke tests 與靜態檢查；新的遠端 GitHub Actions 結果仍要等本次修正 push 後確認。詳見 [docs/current-windows-status.md](docs/current-windows-status.md)。
+commit `39d6449` 的 CI 曾因過時的 notified gather scenario 失敗。本機已把該 scenario 改成真正進入 `should_notify=true` 的並行路徑，並通過 gather、notify-agent、五個 dependency-free MCP smoke tests 與靜態檢查；目前未用 GitHub CLI 重查最新遠端 Actions。詳見 [docs/current-windows-status.md](docs/current-windows-status.md)。
 
 ---
 
 ## 關閉
 
-兩個 Honcho terminal 各按一次 `Ctrl+C`，各自的 process 會連帶關閉；trigger 是一次性指令，demo UI 則在自己的 terminal 按 `Ctrl+C`。關閉後用 PowerShell 確認 port：
+兩個 Honcho terminal 各按一次 `Ctrl+C`，各自的 process 會連帶關閉；trigger 是一次性指令，demo UI 則在自己的 terminal 按 `Ctrl+C`。
+
+Windows / PowerShell 關閉後確認 port：
 
 ```powershell
 11434, 4000, 8001, 8002, 8003 | ForEach-Object {
@@ -430,6 +459,19 @@ commit `39d6449` 的 CI 曾因過時的 notified gather scenario 失敗。本機
 ```
 
 沒有輸出代表這五個 port 已無 listener。若仍有輸出，先用回傳的 `OwningProcess` 搭配 `Get-Process -Id <PID>` 確認 process 身分；不要在未確認 PID 前批次強制終止。
+
+macOS / Bash 如果 `Ctrl+C` 後還有殘留 process，可使用原作者的檢查與清理方式：
+
+```bash
+pkill -f "ollama serve"
+pkill -f "litellm --config gateway/config.yaml"
+pkill -f "uvicorn services."
+pkill -f "uvicorn agents."
+pkill -f "uvicorn demo.api"
+pkill -f "workflows.event_driven_pipeline"
+```
+
+`pkill` 會終止符合樣式的 process，執行前應先用 `pgrep -af '<pattern>'` 確認目標。
 
 ---
 
@@ -463,6 +505,7 @@ docs/                    設計文件（見下）
 ## 進一步閱讀
 
 - [AGENTS.md](AGENTS.md) — 平台目標、Codex/貢獻規範，以及「什麼算平台能力、什麼算場景邏輯」的判準
+- [CLAUDE.md](CLAUDE.md) — 原作者的平台目標與 Claude Code 專案脈絡；保留給 macOS / Claude Code 工作流程
 - [docs/current-windows-status.md](docs/current-windows-status.md) — 目前 Windows 實機狀態、已驗證範圍、阻擋項目與已知 CI 失敗
 - [docs/README.md](docs/README.md) — 每份設計文件在講什麼、什麼時候該看，一份索引
 - [TODO.md](TODO.md) — 已知缺口與尚未做的決策；[fixed.md](fixed.md) — 已經解決的

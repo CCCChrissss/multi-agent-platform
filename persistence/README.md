@@ -1,7 +1,7 @@
 # persistence/
 
 > [!NOTE]
-> 本文件描述持久層 schema 與查詢。Windows 實際連線、pgAdmin 操作與目前資料庫狀態請先看 [../docs/current-windows-status.md](../docs/current-windows-status.md) 與 [../docs/observability.md](../docs/observability.md)。
+> 本文件描述共用持久層 schema 與查詢。Windows 實際連線、pgAdmin 操作與目前資料庫狀態請先看 [../docs/current-windows-status.md](../docs/current-windows-status.md) 與 [../docs/observability.md](../docs/observability.md)；macOS / Bash 原作者指令也保留在本文件。
 
 平台共用的持久層,任何 workflow/node 都可以複用,不用各自兜一套:
 
@@ -18,7 +18,12 @@
   ```powershell
   psql -d agent_architecture_test
   ```
-  也可以直接使用 pgAdmin 4 Query Tool。原作者的 macOS 參考是 `brew services start postgresql@14`；尚未在目前 Windows 環境重驗，也不是 Windows 指令。
+  也可以直接使用 pgAdmin 4 Query Tool。
+- macOS / Bash（原作者流程，尚未由目前維護者重驗）：
+  ```bash
+  brew services start postgresql@14
+  psql -d agent_architecture
+  ```
 - Table 是 `checkpointer.setup()` / `call_log.ensure_schema()` 自動建的(`CREATE TABLE IF NOT EXISTS`,冪等),不用手動 migrate。[workflows/simple_pipeline.py](../workflows/simple_pipeline.py) 的 `main()` 每次啟動都會各呼叫一次。
 - call_log 寫入失敗(例如 Postgres 斷線)只會印警告,不會讓 LLM/tool 呼叫跟著失敗——這是旁路的稽核紀錄,不該影響主流程。
 
@@ -80,6 +85,8 @@ PK:`(thread_id, checkpoint_ns, checkpoint_id)`。
 
 ## 常用指令
 
+### Windows / PowerShell（目前實機資料庫）
+
 ```powershell
 # 看有哪些 thread_id 執行過
 psql -d agent_architecture_test -c "select distinct thread_id from checkpoints;"
@@ -119,3 +126,40 @@ psql -d agent_architecture_test -c "
 ```
 
 Windows 目前使用 pgAdmin 4 連到 `agent_architecture_test`；`checkpoint` / `metadata` 是 jsonb，GUI 可展開查看。TablePlus、Postico 是原作者的其他 GUI 選項，未在目前 Windows 本機驗證。
+
+### macOS / Bash（原作者流程）
+
+```bash
+# 看有哪些 thread_id 執行過
+psql -d agent_architecture -c "select distinct thread_id from checkpoints;"
+
+# 看某個 thread 每一步的 step / source
+psql -d agent_architecture -c "
+  select checkpoint_id, metadata->>'step' as step, metadata->>'source' as source
+  from checkpoints
+  where thread_id = '<thread_id>'
+  order by (metadata->>'step')::int;
+"
+
+# 看某個 thread 最新一筆的完整 state
+psql -d agent_architecture -c "
+  select checkpoint->'channel_values' as state
+  from checkpoints
+  where thread_id = '<thread_id>'
+  order by (metadata->>'step')::int desc
+  limit 1;
+"
+
+# 看某個 thread 底下所有 LLM/tool 呼叫
+psql -d agent_architecture -c "
+  select created_at, node, kind, name, is_error, latency_ms
+  from call_log
+  where thread_id = '<thread_id>'
+  order by created_at;
+"
+
+# 用專案內建工具查 state snapshot + call log
+uv run python -m persistence.history <thread_id>
+```
+
+TablePlus、Postico 等 GUI 可連 `postgresql://localhost:5432/agent_architecture`；`checkpoint` / `metadata` 是 jsonb，GUI 通常會自動展開成樹狀結構。原作者文件中的清空資料表指令未放入這個快速區塊；若確實需要刪除開發資料，應先確認連線的資料庫名稱與備份狀態。
