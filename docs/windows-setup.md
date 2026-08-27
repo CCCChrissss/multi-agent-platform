@@ -3,7 +3,7 @@
 本文件是這個 repository 的 Windows 主操作手冊。開始前先看 [current-windows-status.md](current-windows-status.md)：它記錄哪些項目已在本機驗證、哪些只是保留的上游功能。
 
 > [!IMPORTANT]
-> 2026-08-26 的狀態是：PostgreSQL、pgvector、Ollama、`local-qwen`、`local-embed` 與五個常駐 service 都曾個別驗證；目前 service 已停止。Breeze-ASR-25 尚未下載完成，`.venv` 仍是 CPU 版 PyTorch，所以完整語音 workflow 尚未實機跑通。
+> 2026-08-27 的狀態是：PostgreSQL、pgvector、Ollama、`local-qwen`、`local-embed` 與五個常駐 service 都曾個別驗證；Breeze-ASR-25 也已完成 CUDA / FP16 直接載入與範例音檔轉錄。目前 service 已停止，8001、LiteLLM alias 與完整 event-driven workflow 尚未重驗，所以仍不宣稱端到端跑通。
 
 ## 1. 目前使用的本機路徑
 
@@ -13,6 +13,7 @@
 | uv | `C:\Users\User\.local\bin\uv.exe` |
 | Python 虛擬環境 | `D:\Projects\multi-agent平台架設\multi-agent-platform\.venv` |
 | uv cache | `D:\Projects\multi-agent平台架設\.uv-cache` |
+| Hugging Face cache | `D:\Projects\multi-agent平台架設\.hf-cache` |
 | Ollama | `C:\Users\User\AppData\Local\Programs\Ollama\ollama.exe` |
 | Ollama models | `D:\Projects\multi-agent平台架設\.ollama\models` |
 | PostgreSQL 測試資料庫 | `agent_architecture_test` |
@@ -45,11 +46,20 @@ git --version
 ```powershell
 Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 $env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+$env:HF_HUB_CACHE = 'D:\Projects\multi-agent平台架設\.hf-cache'
 & 'C:\Users\User\.local\bin\uv.exe' python install 3.11
 & 'C:\Users\User\.local\bin\uv.exe' sync
 ```
 
-`uv sync` 依 [pyproject.toml](../pyproject.toml) 與 [uv.lock](../uv.lock) 建立環境。這台電腦已完成；除非 lockfile 或依賴改變，不必每次啟動服務都重跑。
+`uv sync` 依 [pyproject.toml](../pyproject.toml) 與 [uv.lock](../uv.lock) 建立環境。Windows 會從 PyTorch 官方 `cu132` index 安裝 `torch 2.13.0+cu132`；這台電腦已完成。除非 lockfile 或依賴改變，不必每次啟動服務都重跑。
+
+驗證 CUDA：
+
+```powershell
+.\.venv\Scripts\python.exe -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+```
+
+本機預期為 `2.13.0+cu132`、`13.2`、`True`與 `NVIDIA GeForce RTX 4050 Laptop GPU`。
 
 ## 3. PostgreSQL 與 pgvector
 
@@ -163,6 +173,7 @@ Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 $env:PYTHONUTF8 = '1'
 $env:PATH = 'C:\Users\User\.local\bin;C:\Users\User\AppData\Local\Programs\Ollama;' + $env:PATH
 $env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+$env:HF_HUB_CACHE = 'D:\Projects\multi-agent平台架設\.hf-cache'
 $env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
 $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 .\.venv\Scripts\honcho.exe start -f Procfile -e .env
@@ -303,7 +314,7 @@ Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 命令成功送出後會印出 `thread_id`。請先複製保存；後續查詢都以它為索引。
 
 > [!WARNING]
-> 目前 Breeze-ASR-25 尚未就緒，所以這條完整觸發路徑是下一階段程序，不是 2026-08-26 已完成的驗證結果。
+> Breeze-ASR-25 直接推論已就緒，但這條完整觸發路徑仍是下一階段程序，不是 2026-08-27 已完成的端到端驗證結果。
 
 ## 13. 查看結果、thread_id 與 Agent / MCP log
 
@@ -357,7 +368,7 @@ ORDER BY created_at;
 |---|---|---|---|
 | Ollama 無法啟動 | 11434 / `ollama` | 第一個 Honcho terminal 的 `ollama` | Windows 背景版 Ollama 已占用 port；`OLLAMA_MODELS` 沒設到 D 槽 |
 | LiteLLM 無法連線 | 4000 / `litellm` | `litellm` | config 載入錯誤、Ollama 不可達；雲端 alias 真正呼叫時另需 key |
-| STT 失敗或卡住 | 8001 / `stt` | `stt` | Breeze-ASR-25 尚未下載、首次下載耗時、目前是 CPU PyTorch |
+| STT 失敗或卡住 | 8001 / `stt` | `stt` | `HF_HUB_CACHE` 未指向 D 槽已下載權重、GPU 被其他程式佔滿、CUDA OOM、音檔損壞或編碼不支援 |
 | 通知失敗 | 8002 / `notified` | `notified` | service 未啟動；目前只是假實作，不會真的寄信或送 Slack |
 | Agent HTTP 失敗 | 8003 / `agents` | `agents` | workflow YAML load 失敗、LiteLLM 不可達、input schema 不符 |
 | trigger 後沒推進 | `master` / `worker-all` | workers terminal | `Procfile.workers` 未啟動、兩批 process 的 `WORKFLOW_DEF_PATH` 不一致、PostgreSQL / event bus 問題 |

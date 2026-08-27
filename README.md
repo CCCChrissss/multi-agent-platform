@@ -3,7 +3,7 @@
 公司內部多 agent 平台的原型（平台目標與開發規範見 [AGENTS.md](AGENTS.md)）。平台上目前有**兩個示範 workflow**，用來驗證基礎建設堪不堪用，都是同一個形狀：語音轉文字 → 檢核 → 通知。
 
 > [!IMPORTANT]
-> 本 repository 現在以 **Windows / PowerShell / Codex** 為主要操作環境。2026-08-26 的實機安裝狀態、已驗證範圍與目前阻擋項目，請先看 [docs/current-windows-status.md](docs/current-windows-status.md)。目前五個常駐服務均已停止，Breeze-ASR-25 尚未下載完成，因此尚未宣稱完整語音 workflow 已在本機跑通。
+> 本 repository 現在以 **Windows / PowerShell / Codex** 為主要操作環境。2026-08-27 的實機安裝狀態、已驗證範圍與目前阻擋項目，請先看 [docs/current-windows-status.md](docs/current-windows-status.md)。Breeze-ASR-25 已完成 CUDA / FP16 直接載入與範例音檔轉錄；五個常駐服務目前均已停止，所以尚未宣稱完整語音 workflow 已在本機跑通。
 
 | | [stt_check_notify.yaml](workflows/definitions/stt_check_notify.yaml) | [stt_exclusion_notify.yaml](workflows/definitions/stt_exclusion_notify.yaml) |
 |---|---|---|
@@ -83,6 +83,7 @@ Service 層     services/{stt,notified}/  <------------------------+
 Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 $env:PATH = 'C:\Users\User\.local\bin;C:\Users\User\AppData\Local\Programs\Ollama;' + $env:PATH
 $env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+$env:HF_HUB_CACHE = 'D:\Projects\multi-agent平台架設\.hf-cache'
 $env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
 uv sync
 Copy-Item .env.example .env  # 只有 .env 不存在時才執行；既有 .env 不要覆寫
@@ -90,7 +91,7 @@ Copy-Item .env.example .env  # 只有 .env 不存在時才執行；既有 .env �
 
 本機已安裝 PostgreSQL 18.6、pgvector 0.8.6、`qwen2.5:3b` 與 `bge-m3`。資料庫密碼是安裝 PostgreSQL 時由使用者自行設定，不來自 repository，也不應寫進文件。
 
-目前預設 workflow `stt_check_notify` 的三個 agent 決策模型都是 `local-qwen`，不需要 Anthropic / Gemini key；但完整語音流程仍需要 Breeze-ASR-25。`stt_exclusion_notify` 尚未本機化，仍需要有效的 Anthropic / Gemini key。
+目前預設 workflow `stt_check_notify` 的三個 agent 決策模型都是 `local-qwen`，不需要 Anthropic / Gemini key；Breeze-ASR-25 已在這台電腦完成直接轉錄驗證。`stt_exclusion_notify` 尚未本機化，仍需要有效的 Anthropic / Gemini key。
 
 ### 原作者 macOS / Bash 安裝參考（尚未於本機重驗）
 
@@ -161,21 +162,24 @@ ollama list
 
 > 用 `brew services` 讓 Ollama 常駐的話，要把 [Procfile](Procfile) 裡 `ollama:` 那行註解掉，不然下一步 `honcho start` 會撞 port 失敗。
 
-### 5. Breeze-ASR-25（上游設計；Windows 本機尚未完成）
+### 5. Breeze-ASR-25（Windows 本機已完成直接推論）
 
-上游設計是在第一次跑 `stt` 時從 Hugging Face 下載模型並快取。這台 Windows 電腦尚未完成權重下載，而且 `.venv` 目前是 CPU 版 PyTorch；在另行完成 CUDA / PyTorch / 模型驗證前，不把「會自動下載」當成已驗證的可用路徑。
+本機已安裝 `torch 2.13.0+cu132`，`torch.cuda.is_available()` 為 `True`，Breeze-ASR-25 快取放在 `D:\Projects\multi-agent平台架設\.hf-cache`。使用 RTX 4050 Laptop GPU 6 GB 對 `samples/gen_tsmc_01.wav` 直接推論成功，輸出「台積電今天股價創新高投資人非常關注」；峰值 CUDA allocated 約 4.09 GiB、reserved 約 4.51 GiB。
+
+`services/stt/breeze_asr.py` 使用已安裝的 `librosa` / `soundfile` 先轉成單聲道 16 kHz，所以這條 Windows 路徑不需要另裝 FFmpeg。此處只代表「直接模型推論」通過；8001、LiteLLM `breeze-asr` alias 與完整 workflow 仍要另行驗證。
 
 ---
 
 ## Windows / PowerShell 執行（目前主線）
 
-目前五個常駐服務均已停止。等 Breeze-ASR-25 與 PyTorch 執行環境完成後，在 repository 根目錄開啟第一個 PowerShell：
+目前五個常駐服務均已停止。Breeze-ASR-25 與 CUDA PyTorch 已就緒；要開始下一階段的服務層驗證時，在 repository 根目錄開啟第一個 PowerShell：
 
 ```powershell
 Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 $env:PYTHONUTF8 = '1'
 $env:PATH = 'C:\Users\User\.local\bin;C:\Users\User\AppData\Local\Programs\Ollama;' + $env:PATH
 $env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+$env:HF_HUB_CACHE = 'D:\Projects\multi-agent平台架設\.hf-cache'
 $env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
 Remove-Item Env:WORKFLOW_DEF_PATH -ErrorAction SilentlyContinue  # 使用預設 stt_check_notify
 .\.venv\Scripts\honcho.exe start -f Procfile -e .env
@@ -240,7 +244,7 @@ trigger 會印出 `thread_id`。用該值查執行結果與每次 LLM / MCP tool
 .\.venv\Scripts\python.exe -m persistence.history <thread_id>
 ```
 
-完整的三個 terminal 配置、workflow 切換、SQL 查詢、預期輸出與錯誤排查見 [docs/windows-setup.md](docs/windows-setup.md) 與 [docs/observability.md](docs/observability.md)。目前 Breeze 尚未就緒，所以以上完整觸發流程是下一階段的操作程序，尚未在這台電腦完成端到端驗證。
+完整的三個 terminal 配置、workflow 切換、SQL 查詢、預期輸出與錯誤排查見 [docs/windows-setup.md](docs/windows-setup.md) 與 [docs/observability.md](docs/observability.md)。Breeze 直接推論已就緒，但以上完整觸發流程仍是下一階段的操作程序，尚未在這台電腦完成端到端驗證。
 
 ## 原作者 macOS / Bash 執行參考（尚未於本機重驗）
 

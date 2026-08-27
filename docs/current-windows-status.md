@@ -4,7 +4,7 @@
 
 - 檢查日期：2026-08-27
 - 分支：`codex/windows-local-stack-setup`
-- 本次修正前基準 commit：`ef345af`
+- 本次修正前基準 commit：`a864c94`
 - 開發工具：Codex Desktop + VS Code + PowerShell
 - 專案目錄：`D:\Projects\multi-agent平台架設\multi-agent-platform`
 
@@ -27,7 +27,7 @@
 | `qwen2.5:3b` | 已下載 | 模型保存在 D 槽的 Ollama model 目錄 |
 | `bge-m3` | 已下載 | 提供 `local-embed` 使用 |
 | LiteLLM Gateway | 曾驗證成功、目前停止 | port 4000；保留本機與雲端 provider alias |
-| STT service | 曾啟動、目前停止 | port 8001；完整模型推論尚未驗證 |
+| STT service | 曾啟動、目前停止 | port 8001；Breeze 直接 GPU 推論已通過，HTTP route 尚未重驗 |
 | notified service | 曾驗證成功、目前停止 | port 8002；目前是本機 placeholder，不會真的寄 Gmail 或 Slack |
 | Agent Runtime | 曾驗證成功、目前停止 | port 8003；`stt`、`check`、`notified` 共用同一個 process |
 
@@ -41,7 +41,7 @@ LiteLLM 的 alias 仍保留在 [gateway/config.yaml](../gateway/config.yaml)：
 |---|---|---|
 | `local-qwen` | Ollama `qwen2.5:3b` | 已具備，先前已透過 LiteLLM 實際呼叫成功 |
 | `local-embed` | Ollama `bge-m3` | 已具備，先前已實際呼叫成功 |
-| `breeze-asr` | 本機 STT service / Breeze-ASR-25 | **尚未具備完整條件** |
+| `breeze-asr` | 本機 STT service / Breeze-ASR-25 | 權重、CUDA 與直接推論已具備；8001 / LiteLLM alias 尚未重驗 |
 | `claude-haiku` | Anthropic | alias 保留；目前沒有 `ANTHROPIC_API_KEY`，不可呼叫 |
 | `gemini-cheap` | Gemini | alias 保留；目前沒有 `GEMINI_API_KEY`，不可呼叫 |
 | `gemini-strong` | Gemini | alias 保留；目前沒有 `GEMINI_API_KEY`，不可呼叫 |
@@ -50,20 +50,19 @@ LiteLLM 的 alias 仍保留在 [gateway/config.yaml](../gateway/config.yaml)：
 
 | Workflow | `stt` | `check` | `notified` | 目前判定 |
 |---|---|---|---|---|
-| [stt_check_notify.yaml](../workflows/definitions/stt_check_notify.yaml) | `local-qwen` | `local-qwen` | `local-qwen` | agent 決策模型已本機化；完整語音鏈路仍受 Breeze-ASR-25 缺口阻擋 |
+| [stt_check_notify.yaml](../workflows/definitions/stt_check_notify.yaml) | `local-qwen` | `local-qwen` | `local-qwen` | agent 決策模型已本機化，Breeze 直接推論已通過；完整服務鏈尚未重驗 |
 | [stt_exclusion_notify.yaml](../workflows/definitions/stt_exclusion_notify.yaml) | `gemini-cheap` | `claude-haiku` | `claude-haiku` | 目前缺少雲端 API key，不能完整執行；尚未進行本機 alias 修改 |
 
 `local-embed` 仍只負責 embedding，`breeze-asr` 仍只負責語音辨識；兩者不應改成 `local-qwen`。
 
 ## 目前阻擋完整 workflow 的項目
 
-1. `Breeze-ASR-25` 權重尚未下載完成。
-2. 專案 `.venv` 目前是 CPU 版 PyTorch（`torch 2.13.0+cpu`，`cuda_available=False`）。
-3. 本機 GPU 是 NVIDIA GeForce RTX 4050 Laptop GPU 6 GB；適合的 CUDA / PyTorch / Breeze 組合尚未安裝與驗證。
-4. 五個常駐服務目前都已停止。
-5. `stt_exclusion_notify` 仍依賴目前沒有金鑰的 Anthropic / Gemini alias。
+1. 五個常駐服務目前都已停止。
+2. 8001 STT HTTP route 與 LiteLLM `breeze-asr` alias 尚未在新 CUDA 環境重驗。
+3. `stt_check_notify` 的 event-driven workers、trigger、thread result 與 call log 尚未完成本次端到端驗證。
+4. `stt_exclusion_notify` 仍依賴目前沒有金鑰的 Anthropic / Gemini alias。
 
-因此，目前只能說本機 LLM、embedding、資料庫與個別 service 曾經驗證成功；**不能宣稱完整語音 workflow 已成功**。
+因此，目前可以確定本機 LLM、embedding、資料庫與 Breeze 直接推論曾經驗證成功；**仍不能宣稱完整語音 workflow 已成功**。
 
 ## 已完成的局部驗證
 
@@ -71,6 +70,9 @@ LiteLLM 的 alias 仍保留在 [gateway/config.yaml](../gateway/config.yaml)：
 - LiteLLM 曾成功把 `local-qwen` 路由到 Ollama 的 `qwen2.5:3b`。
 - `local-embed` 曾成功使用 `bge-m3`。
 - Agent Runtime 的 `check` 基本 request 曾成功使用 `local-qwen`。
+- `.venv` 已是 `torch 2.13.0+cu132`，`torch.cuda.is_available()` 為 `True`，CUDA tensor 實際運算已通過。
+- Breeze-ASR-25 權重已放在 `D:\Projects\multi-agent平台架設\.hf-cache`，3,086,761,032 bytes 的 `model.safetensors` SHA-256 已驗證為 `c5d952b3bc03ea277209aff0ef5b5c4c055d74449ff794c02d8f4e315fdef6b6`。
+- `samples/gen_tsmc_01.wav` 直接轉錄成功，輸出「台積電今天股價創新高投資人非常關注」；峰值 CUDA allocated 約 4.09 GiB、reserved 約 4.51 GiB。
 - `should_notify=false` 時，[llm/notify_agent.py](../llm/notify_agent.py) 會在 LLM / tool call 前直接回傳空陣列 `[]`；這是目前程式行為。
 - PostgreSQL 的 `orchestrator_runs`、checkpoint 與 `call_log` 查詢流程曾驗證可用。
 - Windows 靜態相容性 GitHub Actions job 在 commit `39d6449` 通過。
@@ -91,6 +93,8 @@ commit `39d6449` 的最新 GitHub Actions 結果為失敗，但不是三個 job 
 - `llm.notify_agent_smoke_test`：通過（三個 scenario）
 - 五個 dependency-free MCP smoke tests：通過
 - `scripts/static_compat_check.py`：通過
+- `services.stt.breeze_asr_smoke_test`：通過（8 kHz WAV 在無 FFmpeg 環境轉為單聲道 16 kHz）
+- `services.stt.temp_audio_smoke_test`：通過
 
 遠端 GitHub Actions 仍要等本次修正 commit / push 後才能判定，現在不能宣稱新的 CI run 已成功。
 
@@ -106,7 +110,7 @@ Honcho 2.0.0 在這台繁體中文 Windows 上會用 CP950 讀 `.env`；如果 `
 $env:PYTHONUTF8 = '1'
 ```
 
-完整的 Windows 啟動、port 檢查、workflow 選擇、workers、trigger 與查詢方式，統一維護在 [windows-setup.md](windows-setup.md)。在 Breeze-ASR-25 與 PyTorch 環境完成前，其中的完整 workflow 指令只作為下一階段操作程序，不代表已在本機跑通。
+完整的 Windows 啟動、port 檢查、workflow 選擇、workers、trigger 與查詢方式，統一維護在 [windows-setup.md](windows-setup.md)。Breeze-ASR-25 與 CUDA PyTorch 已完成直接推論驗證；其中的完整 workflow 指令仍是下一階段操作程序，不代表已在本機跑通。
 
 ## 文件維護原則
 
