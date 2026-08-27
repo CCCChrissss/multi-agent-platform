@@ -176,6 +176,10 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 4. `PERSISTENCE_DATABASE_URL` 指向同一個可連線資料庫。
 5. `orchestrator_runs` 是否停在某個 `current_step`。
 
+### trigger 成功後出現 `pool-2` 或 `OSError(22, 'Invalid argument')`
+
+先用 `persistence.history <thread_id>` 確認 run 狀態。Windows 實機曾發生 Honcho 已退出，但多組 `uv`／Python 孫程序、Master、worker、LiteLLM 與 MCP 子程序仍存活；它們會保留重複 PostgreSQL connection pools，甚至讓 Agent Runtime 繼續使用已失效的終端輸出 handle。先依 [README 的「關閉」](../README.md#關閉) 執行 `scripts/stop_windows_stack.ps1`，確認 5432 保持運行、其餘五個 port 都釋放，再只啟動一組主 Honcho 與一組 workers。
+
 ### `stt_exclusion_notify` 查不到條文
 
 這是上游場景的必要前置，原作者流程要求先執行：
@@ -192,9 +196,18 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 
 原因不是正式輸出應改回舊字串，而是 gather scenario 使用 `should_notify=false` 後會在任何並行工作前直接回傳 `[]`，已經測不到原本要驗證的 concurrency。2026-08-27 本機已把該 scenario 改成 `should_notify=true` 並模擬成功 tool call，三個 gather scenario 全部通過；負分支安全短路則由 `llm.notify_agent_smoke_test` 獨立驗證。新的遠端 CI 結果要等修正 push 後確認。
 
-### MCP smoke test 在 Windows 報 uv cache 初始化失敗
+### Agent Runtime / MCP smoke test 報 `Connection closed` 或 uv cache 初始化失敗
 
-如果錯誤指向 `C:\Users\User\AppData\Local\uv\cache`，代表 MCP SDK 的 stdio 子行程沒有繼承目前 PowerShell 的 `UV_CACHE_DIR`。這不是 MCP server assertion 失敗。使用 [testing.md](testing.md#windows-d-槽-uv-cache-注意事項) 的一次性 wrapper 明確把 D 槽 cache 傳給子行程；production 層的正式修正留待獨立階段處理。
+如果底層 stderr 指向 `C:\Users\User\AppData\Local\uv\cache`，代表 MCP SDK 的 stdio 子行程沒有繼承目前 PowerShell 的 `UV_CACHE_DIR`。Agent Runtime 外層通常只看到 `McpError: Connection closed`，不是 workflow YAML、MCP permission 或 MCP server assertion 失敗。
+
+2026-08-27 已在 [mcp_servers/base_client.py](../mcp_servers/base_client.py) 修正：只將 `UV_CACHE_DIR` 與 `PYTHONUTF8` 傳給 stdio 子行程，不傳遞 secret。啟動 Honcho 或單獨跑 smoke test 前，仍要在同一個 PowerShell 設定：
+
+```powershell
+$env:PYTHONUTF8 = '1'
+$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+```
+
+驗證方式見 [testing.md](testing.md#windows-d-槽-uv-cache-注意事項)。
 
 ### Smoke test 偶發收到錯的事件
 

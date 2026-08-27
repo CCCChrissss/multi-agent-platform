@@ -34,11 +34,11 @@
 stt -> check -> notified
 ```
 
-- **stt**：透過 `MCPGateway` 連上 [mcp_servers/stt](mcp_servers/stt/)（轉錄）與 [mcp_servers/format_check](mcp_servers/format_check/)（格式檢查）兩個 MCP server，透過 LiteLLM Gateway 呼叫 workflow 宣告的 LLM 自行決定要不要先檢查音檔格式、再進行轉錄（[llm/stt_agent.py](llm/stt_agent.py)）。目前 `stt_check_notify` 使用 `local-qwen`，`stt_exclusion_notify` 仍使用 `gemini-cheap`；兩者共用相同 agent 邏輯，但 model alias 由各自 YAML 決定。實際轉錄仍由 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（[services/stt/breeze_asr.py](services/stt/breeze_asr.py)）負責，不會改由 `local-qwen` 取代。
+- **stt**：透過 `MCPGateway` 連上 [mcp_servers/stt](mcp_servers/stt/)（轉錄）與 [mcp_servers/format_check](mcp_servers/format_check/)（格式檢查）兩個 MCP server，透過 LiteLLM Gateway 呼叫 workflow 宣告的 LLM 自行決定要不要先檢查音檔格式、再進行轉錄（[llm/stt_agent.py](llm/stt_agent.py)）。目前 `stt_check_notify` 與 `stt_exclusion_notify` 都宣告 `gemini-cheap`；兩者共用相同 agent 邏輯，但 model alias 由各自 YAML 決定。實際轉錄仍由 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（[services/stt/breeze_asr.py](services/stt/breeze_asr.py)）負責，不會因 agent 決策模型切換而被取代。
 - **check**：兩個場景各自一套判斷邏輯，[agents/runtime.py](agents/runtime.py) 的 `/check/run` 路由依啟動時選的 workflow 決定呼叫哪一套（見下方「切換示範 workflow」）：
-  - `stt_check_notify`：透過 LiteLLM Gateway 呼叫 LLM（`local-qwen`）判斷逐字稿是否提到台積電，並用確定性的別名比對當 backstop（[llm/tsmc_judge.py](llm/tsmc_judge.py)）。
+  - `stt_check_notify`：透過 LiteLLM Gateway 呼叫 LLM（目前宣告 `gemini-cheap`）判斷逐字稿是否提到台積電，並用確定性的別名比對當 backstop（[llm/tsmc_judge.py](llm/tsmc_judge.py)）。
   - `stt_exclusion_notify`：透過 LiteLLM Gateway 呼叫 LLM（`claude-haiku`）判斷客戶描述的情況是否涉及保單除外責任——不會把保單條款塞進 prompt，而是透過 [`browse_semantic_memory`](mcp_servers/memory/server.py) 這個 MCP tool 自己決定要往下鑽哪個分支，只把讀到過的條文拿來引用（[llm/exclusion_judge.py](llm/exclusion_judge.py)，詳見 [docs/exclusion-scenario-plan.md](docs/exclusion-scenario-plan.md)）。
-- **notified**：兩個場景共用同一顆 agent，不知道場景邏輯——只收「要不要發、主旨、內容」，透過 `MCPGateway`（[mcp_servers/gateway.py](mcp_servers/gateway.py)）連上 [mcp_servers/notified](mcp_servers/notified/)（Slack / Gmail 兩個 tool，背後打 [services/notified/](services/notified/)）。`stt_check_notify` 目前宣告 `local-qwen`，`stt_exclusion_notify` 仍宣告 `claude-haiku`。`should_notify=false` 時會在呼叫 LLM / tool 前直接回傳 `[]`；需要通知時才由模型決定管道。目前 notified service 是本機 placeholder，不會真的對外寄送。
+- **notified**：兩個場景共用同一顆 agent，不知道場景邏輯——只收「要不要發、主旨、內容」，透過 `MCPGateway`（[mcp_servers/gateway.py](mcp_servers/gateway.py)）連上 [mcp_servers/notified](mcp_servers/notified/)（Slack / Gmail 兩個 tool，背後打 [services/notified/](services/notified/)）。`stt_check_notify` 目前宣告 `gemini-cheap`，`stt_exclusion_notify` 仍宣告 `claude-haiku`。`should_notify=false` 時會在呼叫 LLM / tool 前直接回傳 `[]`；需要通知時才由模型決定管道。目前 notified service 是本機 placeholder，不會真的對外寄送。
 
 ### 單一 runtime process
 
@@ -93,7 +93,7 @@ Copy-Item .env.example .env  # 只有 .env 不存在時才執行；既有 .env �
 
 本機已安裝 PostgreSQL 18.6、pgvector 0.8.6、`qwen2.5:3b` 與 `bge-m3`。資料庫密碼是安裝 PostgreSQL 時由使用者自行設定，不來自 repository，也不應寫進文件。
 
-目前預設 workflow `stt_check_notify` 的三個 agent 決策模型都是 `local-qwen`，不需要 Anthropic / Gemini key；Breeze-ASR-25 已在這台電腦完成直接轉錄驗證。`stt_exclusion_notify` 尚未本機化，仍需要有效的 Anthropic / Gemini key。
+目前預設 workflow `stt_check_notify` 的三個 agent 決策模型都是 `gemini-cheap`，需要 `.env` 中有效的 `GEMINI_API_KEY`；2026-08-27 已在乾淨重啟後完成一次 event-driven 端到端執行。Breeze-ASR-25 已在這台電腦完成直接轉錄與 workflow 內實際呼叫驗證。`stt_exclusion_notify` 的 `check`／`notified` 仍使用 `claude-haiku`，因此另需有效的 Anthropic key。
 
 ### macOS / Bash / Claude Code（原作者流程，尚未由目前維護者重驗）
 
@@ -139,7 +139,7 @@ cp .env.example .env
 打開 `.env` 填：
 
 - `ANTHROPIC_API_KEY`——目前只有仍宣告 `claude-haiku` 的 workflow / 工具才需要。預設的 `stt_check_notify` 不需要；`stt_exclusion_notify` 的 `check`／`notified` 仍需要。
-- `GEMINI_API_KEY`——`stt_exclusion_notify` 的 `stt` 仍宣告 `gemini-cheap`，因此執行該 workflow 時需要；[scripts/distill_procedural.py](scripts/distill_procedural.py) 的知識蒸餾與 [evals/run_eval.py](evals/run_eval.py) 的 Gemini 對照診斷也可能需要。只跑 `stt_check_notify` 且不執行這些工具時可以留空。
+- `GEMINI_API_KEY`——目前 `stt_check_notify` 的三個 step 與 `stt_exclusion_notify` 的 `stt` 都宣告 `gemini-cheap`，執行任一 workflow 都需要；[scripts/distill_procedural.py](scripts/distill_procedural.py) 的知識蒸餾與 [evals/run_eval.py](evals/run_eval.py) 的 Gemini 對照診斷也可能需要。
 
 `PERSISTENCE_DATABASE_URL` 預設值對應上一步建的 DB，本機 Postgres 有設帳密才要改。
 
@@ -172,7 +172,17 @@ ollama list
 
 ## Windows / PowerShell 執行（目前主線）
 
-目前五個常駐服務均已停止。Breeze-ASR-25 與 CUDA PyTorch 已就緒；要開始下一階段的服務層驗證時，在 repository 根目錄開啟第一個 PowerShell：
+目前已實機驗證五個 application port、`local-qwen`、`local-embed`、Agent Runtime 基本 request，以及 `stt_check_notify` 的一次完整 event-driven 執行。從 VS Code 自行啟動時，先從 Windows 系統列完全退出 Ollama Desktop，再於 repository 根目錄開啟第一個 PowerShell。先確認 11434 沒有背景 listener：
+
+```powershell
+$existingOllama = Get-NetTCPConnection -State Listen -LocalPort 11434 -ErrorAction SilentlyContinue
+if ($existingOllama) {
+    Get-Process -Id $existingOllama.OwningProcess
+    throw '11434 已被佔用；請先退出 Ollama Desktop，再重新執行。'
+}
+```
+
+然後在**同一個 VS Code PowerShell terminal**設定環境並啟動 Honcho：
 
 ```powershell
 Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
@@ -185,7 +195,7 @@ Remove-Item Env:WORKFLOW_DEF_PATH -ErrorAction SilentlyContinue  # 使用預設 
 .\.venv\Scripts\honcho.exe start -f Procfile -e .env
 ```
 
-`PYTHONUTF8=1` 是這台繁體中文 Windows 的必要設定；否則 Honcho 2.0.0 可能用 CP950 讀 UTF-8 `.env`，產生 `UnicodeDecodeError`。如果 Windows 版 Ollama 已在背景占用 11434，先關閉該背景 process，再讓 Procfile 啟動 Ollama；同一個 port 不能同時啟動兩份服務。
+`PYTHONUTF8=1` 避免 Honcho 以 CP950 解碼 UTF-8 `.env`。`UV_CACHE_DIR` 會由共用 `MCPClient` 安全傳給 MCP stdio 子行程；`OLLAMA_MODELS` 則必須在 `ollama serve` 啟動**之前**設定。只在 client terminal 後來改變這個變數，不會切換已執行 Ollama server 的模型目錄。
 
 另開第二個 PowerShell 檢查五個 port 與 LiteLLM alias：
 
@@ -197,10 +207,18 @@ Remove-Item Env:WORKFLOW_DEF_PATH -ErrorAction SilentlyContinue  # 使用預設 
     }
 }
 
+$ollamaModels = (Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags').models.name
+$ollamaModels
+
+if ($ollamaModels -notcontains 'qwen2.5:3b' -or
+    $ollamaModels -notcontains 'bge-m3:latest') {
+    throw 'Ollama 沒有讀到專案 model 目錄；請檢查 OLLAMA_MODELS 與啟動順序。'
+}
+
 (Invoke-RestMethod -Uri 'http://127.0.0.1:4000/v1/models').data.id
 ```
 
-預期五個 port 都是 `True`，alias 清單包含 `local-qwen`、`local-embed`、`breeze-asr`、`claude-haiku`、`gemini-cheap`、`gemini-strong`。Alias 出現在清單只代表 LiteLLM 已載入設定；沒有 API key 的雲端 alias 仍不能實際呼叫。
+預期五個 port 都是 `True`，Ollama 清單必須有 `qwen2.5:3b` 與 `bge-m3:latest`，LiteLLM alias 清單則包含 `local-qwen`、`local-embed`、`breeze-asr`、`claude-haiku`、`gemini-cheap`、`gemini-strong`。Alias 出現只代表 LiteLLM 已載入設定；不能取代 Ollama `/api/tags` 與實際呼叫驗證。
 
 確認本機模型的實際呼叫：
 
@@ -235,8 +253,10 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 ```powershell
 .\.venv\Scripts\python.exe -m orchestrator.trigger `
     --workflow-def workflows/definitions/stt_check_notify.yaml `
-    --payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'
+    --payload '{\"audio_ref\":\"samples/gen_tsmc_01.wav\"}'
 ```
+
+以上寫法已在 VS Code 目前使用的 **Windows PowerShell 5.1** 實機驗證。`\"` 會讓 Python 最終收到合法 JSON 的雙引號；若直接使用 `'{"audio_ref":"..."}'`，PowerShell 5.1 呼叫原生 `.exe` 時會移除內層雙引號，`orchestrator.trigger` 便會在 `json.loads()` 出現 `JSONDecodeError: Expecting property name enclosed in double quotes`。若使用 PowerShell 7，則使用未跳脫形式 `--payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'`。
 
 trigger 會印出 `thread_id`。用該值查執行結果與每次 LLM / MCP tool call：
 
@@ -244,7 +264,7 @@ trigger 會印出 `thread_id`。用該值查執行結果與每次 LLM / MCP tool
 .\.venv\Scripts\python.exe -m persistence.history <thread_id>
 ```
 
-完整的三個 terminal 配置、workflow 切換、SQL 查詢、預期輸出與錯誤排查見 [docs/windows-setup.md](docs/windows-setup.md) 與 [docs/observability.md](docs/observability.md)。Breeze 直接推論已就緒，但以上完整觸發流程仍是下一階段的操作程序，尚未在這台電腦完成端到端驗證。
+完整的三個 terminal 配置、workflow 切換、SQL 查詢、預期輸出與錯誤排查見 [docs/windows-setup.md](docs/windows-setup.md) 與 [docs/observability.md](docs/observability.md)。2026-08-27 的成功 run 為 `thread_id=e138228b-317b-4cc3-bc75-8496b26e14f2`；資料庫狀態為 `completed`，且 `stt`、`check`、`notified` 與 `memory_writer` 都有對應 call log。這證明單次觸發路徑已跑通，不等於 Windows 登入後自動啟動或服務異常後自動重啟等「常駐服務」能力已完成。
 
 ## 原作者 macOS / Bash 執行參考（尚未於本機重驗）
 
@@ -450,15 +470,32 @@ commit `39d6449` 的 CI 曾因過時的 notified gather scenario 失敗。本機
 
 兩個 Honcho terminal 各按一次 `Ctrl+C`，各自的 process 會連帶關閉；trigger 是一次性指令，demo UI 則在自己的 terminal 按 `Ctrl+C`。
 
-Windows / PowerShell 關閉後確認 port：
+Windows / PowerShell 關閉後確認 port；正常結果是五個 application port 都顯示 `False`：
 
 ```powershell
 11434, 4000, 8001, 8002, 8003 | ForEach-Object {
-    Get-NetTCPConnection -State Listen -LocalPort $_ -ErrorAction SilentlyContinue
+    $listener = Get-NetTCPConnection -State Listen -LocalPort $_ -ErrorAction SilentlyContinue
+    [pscustomobject]@{
+        Port = $_
+        Listening = $null -ne $listener
+        PID = if ($listener) { $listener.OwningProcess } else { $null }
+    }
 }
 ```
 
-沒有輸出代表這五個 port 已無 listener。若仍有輸出，先用回傳的 `OwningProcess` 搭配 `Get-Process -Id <PID>` 確認 process 身分；不要在未確認 PID 前批次強制終止。
+Windows 上的 Honcho 可能已退出，但它啟動的 `uv`、Python、MCP 或 worker 孫程序仍然存活。實機曾因此同時留下多組 Master/worker/LiteLLM、33 條 idle PostgreSQL 連線，下一次 run 在 `stt` 出現 `error connecting in 'pool-2'` 與 `OSError(22, 'Invalid argument')`。若上表仍有 `True`、重啟時撞 port，或 workers terminal 已關閉但程序仍在，於 repository 根目錄先預覽再清理：
+
+```powershell
+Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+.\scripts\stop_windows_stack.ps1 -WhatIf
+.\scripts\stop_windows_stack.ps1
+```
+
+`-WhatIf` 只列出範圍，不會停止程序；第二個指令才會執行。腳本只比對本 repository 的 Honcho、LiteLLM、STT、notified、Agent Runtime、event-driven workers、其子程序，以及實際占用 11434 的 `ollama serve`；不會停止 PostgreSQL 或 VS Code。完成後預期 `5432=True`，其餘五個 port 都是 `False`。若 PowerShell execution policy 阻擋本機腳本，可只對這一次執行繞過：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop_windows_stack.ps1
+```
 
 macOS / Bash 如果 `Ctrl+C` 後還有殘留 process，可使用原作者的檢查與清理方式：
 
@@ -494,6 +531,7 @@ services/                真正幹活的常駐服務：STT（Breeze-ASR-25）、
 persistence/             LangGraph checkpointer + LLM/tool 呼叫紀錄 + 長期記憶（recall/browse/remember）+ 稽核歷史查詢，任何 workflow 共用
 data/insurance_product/  除外責任場景的保單條款來源資料（seed 進長期記憶用，見 scripts/）
 scripts/                 一次性腳本：seed_insurance_memory.py（保單條款）、記憶蒸餾 pipeline 的其餘幾支（見「驗證」章節）
+                          stop_windows_stack.ps1（Windows Honcho 殘留程序安全清理）
 evals/                   check 的評測案例（check_cases.yaml）+ runner（run_eval.py），M5 品質關卡用
 samples/                 測試音檔（gen_tsmc_*/gen_other_* 是台積電場景，gen_policy_* 是除外責任場景）
 demo/                    瀏覽器 UI（api.py 是 port 8010 的 FastAPI 後端、index.html 是純前端）：組裝/測試 agent、觸發 workflow、審核 memory-writer 寫入的 pending 記憶

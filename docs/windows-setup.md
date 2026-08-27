@@ -3,7 +3,7 @@
 本文件是這個 repository 的 Windows 主操作手冊。開始前先看 [current-windows-status.md](current-windows-status.md)：它記錄哪些項目已在本機驗證、哪些只是保留的上游功能。
 
 > [!IMPORTANT]
-> 2026-08-27 的狀態是：PostgreSQL、pgvector、Ollama、`local-qwen`、`local-embed` 與五個常駐 service 都曾個別驗證；Breeze-ASR-25 也已完成 CUDA / FP16 直接載入與範例音檔轉錄。目前 service 已停止，8001、LiteLLM alias 與完整 event-driven workflow 尚未重驗，所以仍不宣稱端到端跑通。
+> 2026-08-27 的狀態是：PostgreSQL、pgvector、Ollama、`local-qwen`、`local-embed` 與五個 application service 都已驗證；Breeze-ASR-25 已完成 CUDA / FP16 直接載入、範例音檔轉錄與 workflow 內呼叫。`stt_check_notify` 已完成一次 event-driven 端到端執行；Windows 常駐服務模式尚未建立或驗證。
 
 ## 1. 目前使用的本機路徑
 
@@ -110,7 +110,7 @@ PERSISTENCE_DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/agen
 
 目前金鑰規則：
 
-- 預設 `stt_check_notify` 的三個 agent step 都使用 `local-qwen`，不需要 `ANTHROPIC_API_KEY` 或 `GEMINI_API_KEY`。
+- 目前 `stt_check_notify` 的三個 agent step 都使用 `gemini-cheap`，需要有效的 `GEMINI_API_KEY`；乾淨重啟後已完成實際呼叫與一次完整 run。
 - `stt_exclusion_notify` 仍使用 `gemini-cheap` 與 `claude-haiku`，沒有有效金鑰時不能執行。
 - 不要為本機測試填假 key，也不要把真實 key 寫進 `.env.example`。
 
@@ -123,6 +123,8 @@ $env:PATH = 'C:\Users\User\AppData\Local\Programs\Ollama;' + $env:PATH
 $env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
 ```
 
+重要：`OLLAMA_MODELS` 是 Ollama **server 啟動時**讀取的。如果 Ollama Desktop 已在背景佔用 11434，之後只在 VS Code terminal 設定這個變數，不會改變既有 server 的 model 目錄。建議本專案統一由 Honcho / Procfile 啟動 Ollama，啟動前先從 Windows 系統列退出 Ollama Desktop。
+
 確認已下載模型：
 
 ```powershell
@@ -134,13 +136,20 @@ ollama list
 - `qwen2.5:3b`
 - `bge-m3`
 
-如果只想單獨啟動 Ollama，可執行 `ollama serve`。最簡單的完整服務路徑則是讓 [Procfile](../Procfile) 啟動它；啟動前先確認 11434 沒有被 Windows 背景版 Ollama 占用。
+如果只想單獨啟動 Ollama，可在設定上述變數後執行 `ollama serve`。最簡單的完整服務路徑則是讓 [Procfile](../Procfile) 啟動它；啟動前先確認 11434 沒有被 Windows 背景版 Ollama 占用。
 
 ```powershell
 Test-NetConnection -ComputerName 127.0.0.1 -Port 11434 -InformationLevel Quiet
 ```
 
-回傳 `False` 表示 port 目前空閒；可交給 Honcho 啟動。回傳 `True` 表示已經有 listener，不能再啟動第二份 `ollama serve`。
+回傳 `False` 表示 port 目前空閒；可交給 Honcho 啟動。回傳 `True` 時，先找出 listener：
+
+```powershell
+$listener = Get-NetTCPConnection -State Listen -LocalPort 11434
+Get-Process -Id $listener.OwningProcess
+```
+
+若是 Ollama Desktop，先從系統列完全退出，重新確認 port 為 `False`。不要在未確認 PID 身分前直接強制終止 process。
 
 ## 6. 選擇 workflow
 
@@ -167,6 +176,8 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_exclusion_notify.yaml'
 ## 7. 啟動五個常駐服務
 
 第一個 PowerShell：
+
+這個 terminal 建議直接使用 VS Code 的整合式 PowerShell。執行前再次確認 11434 是空的；否則 Honcho 裡的 `ollama` 會啟動失敗，且背景 Ollama 可能讀取另一個 model 目錄。
 
 ```powershell
 Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
@@ -211,6 +222,20 @@ UnicodeDecodeError: 'cp950' codec can't decode byte ...
 ```
 
 全部顯示 `True` 才表示五個 process 都有 listener。這些 service 沒有一致的 `/health` endpoint，因此 port 檢查只是第一層；還要檢查 LiteLLM alias 與實際模型呼叫。
+
+先檢查**目前 Ollama server 實際看到的模型**：
+
+```powershell
+$ollamaModels = (Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags').models.name
+$ollamaModels
+
+if ($ollamaModels -notcontains 'qwen2.5:3b' -or
+    $ollamaModels -notcontains 'bge-m3:latest') {
+    throw 'Ollama 沒有讀到專案 model 目錄；請檢查 OLLAMA_MODELS 與啟動順序。'
+}
+```
+
+只看 `ollama list` 或 LiteLLM `/v1/models` 都不足以判斷：`/v1/models` 會列出 config 裡的 alias，即使底層 `qwen2.5:3b` 不存在也可能出現 `local-qwen`。
 
 ```powershell
 (Invoke-RestMethod -Uri 'http://127.0.0.1:4000/v1/models').data.id
@@ -308,8 +333,10 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 .\.venv\Scripts\python.exe -m orchestrator.trigger `
     --workflow-def workflows/definitions/stt_check_notify.yaml `
-    --payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'
+    --payload '{\"audio_ref\":\"samples/gen_tsmc_01.wav\"}'
 ```
+
+這是目前 VS Code 實際使用的 **Windows PowerShell 5.1** 寫法。JSON 內的 `\"` 不能省略，否則 PowerShell 5.1 呼叫 Python `.exe` 時會移除雙引號，並在 `json.loads()` 出現 `JSONDecodeError: Expecting property name enclosed in double quotes`。若終端機是 PowerShell 7，改用未跳脫形式 `--payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'`。
 
 命令成功送出後會印出 `thread_id`。請先複製保存；後續查詢都以它為索引。
 
@@ -357,43 +384,56 @@ ORDER BY created_at;
 3. `orchestrator_runs.status` 最後是 `completed`。
 4. `persistence.history` 顯示各 step 的 checkpoint / state。
 5. `call_log` 可看到對應 agent 的 LLM、tool 或 memory 紀錄。
-6. `stt_check_notify` 的 LLM model name 應是 `local-qwen`；embedding 仍應是 `local-embed`。
+6. `stt_check_notify` 的 LLM model name 目前應是 `gemini-cheap`；embedding 仍應是 `local-embed`。
 7. `should_notify=false` 時 `notified_log=[]` 是正常結果，而且不應產生通知 LLM / tool call。
 
-目前本機尚未同時達成上述完整條件，因此不能把「服務能啟動」等同於「workflow 已成功」。
+2026-08-27 的 `thread_id=e138228b-317b-4cc3-bc75-8496b26e14f2` 已同時符合上述條件，資料庫最終狀態為 `completed`。這只證明單次 event-driven 執行成功；仍不能把它等同於 Windows 登入後自動啟動、背景常駐或異常後自動恢復已完成。
 
 ## 15. 失敗時依 process / port / log 排查
 
 | 現象 | 先查 port / process | 主要 log | 常見原因 |
 |---|---|---|---|
-| Ollama 無法啟動 | 11434 / `ollama` | 第一個 Honcho terminal 的 `ollama` | Windows 背景版 Ollama 已占用 port；`OLLAMA_MODELS` 沒設到 D 槽 |
+| Ollama 無法啟動 | 11434 / `ollama` | 第一個 Honcho terminal 的 `ollama` | Windows 背景版 Ollama 已占用 port；`OLLAMA_MODELS` 沒在 server 啟動前設到 D 槽 |
+| Alias 存在但 `model not found` | 11434 / `/api/tags` | `ollama` 與 `litellm` | 目前 Ollama server 使用另一個 model 目錄；退出背景 Ollama，在同一 terminal 先設 `OLLAMA_MODELS` 再由 Honcho 啟動 |
 | LiteLLM 無法連線 | 4000 / `litellm` | `litellm` | config 載入錯誤、Ollama 不可達；雲端 alias 真正呼叫時另需 key |
 | STT 失敗或卡住 | 8001 / `stt` | `stt` | `HF_HUB_CACHE` 未指向 D 槽已下載權重、GPU 被其他程式佔滿、CUDA OOM、音檔損壞或編碼不支援 |
 | 通知失敗 | 8002 / `notified` | `notified` | service 未啟動；目前只是假實作，不會真的寄信或送 Slack |
-| Agent HTTP 失敗 | 8003 / `agents` | `agents` | workflow YAML load 失敗、LiteLLM 不可達、input schema 不符 |
+| Agent HTTP 失敗 | 8003 / `agents` | `agents` | workflow YAML load 失敗、LiteLLM 不可達、input schema 不符；舊版程式若見 `McpError: Connection closed`，檢查 MCP 子行程是否繼承 `UV_CACHE_DIR` |
+| trigger 已印出 `thread_id`，接著出現 `pool-2`／`OSError(22)` | 5432、五個 application port、Master/worker 數量 | workers 與 `agents` | Windows Honcho 已退出但 `uv`／Python 孫程序殘留；多組 workers 與 connection pools 同時運行 |
 | trigger 後沒推進 | `master` / `worker-all` | workers terminal | `Procfile.workers` 未啟動、兩批 process 的 `WORKFLOW_DEF_PATH` 不一致、PostgreSQL / event bus 問題 |
 | 查不到 run | PostgreSQL | trigger 與 `master` | 觸發未成功、查錯資料庫、`PERSISTENCE_DATABASE_URL` 不一致 |
 | `UnicodeDecodeError: cp950` | `honcho` | 啟動 terminal | 啟動前沒有在同一個 PowerShell 設定 `$env:PYTHONUTF8='1'` |
 
 ## 16. 關閉
 
-在兩個 Honcho terminal 分別按 `Ctrl+C`。確認沒有 listener：
+先在兩個 Honcho terminal 分別按 `Ctrl+C`。確認五個 application port 都是 `False`：
 
 ```powershell
 11434, 4000, 8001, 8002, 8003 | ForEach-Object {
-    Get-NetTCPConnection -State Listen -LocalPort $_ -ErrorAction SilentlyContinue
+    $listener = Get-NetTCPConnection -State Listen -LocalPort $_ -ErrorAction SilentlyContinue
+    [pscustomobject]@{
+        Port = $_
+        Listening = $null -ne $listener
+        PID = if ($listener) { $listener.OwningProcess } else { $null }
+    }
 }
 ```
 
-若仍有輸出，先檢查 process，再決定是否終止：
+若任何一項仍是 `True`，或 Honcho terminal 已關閉但背景仍有 Master/worker，使用 repository 內的範圍限定腳本。先以 `-WhatIf` 預覽，再實際清理：
 
 ```powershell
-Get-NetTCPConnection -State Listen -LocalPort 4000 |
-    Select-Object LocalAddress, LocalPort, OwningProcess
-Get-Process -Id <PID>
+Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+.\scripts\stop_windows_stack.ps1 -WhatIf
+.\scripts\stop_windows_stack.ps1
 ```
 
-不要在未確認 PID 與用途前批次 `Stop-Process -Force`。
+腳本會追蹤本 repository 的 Honcho／uv／Python 程序樹與 Agent Runtime 的 MCP 子程序，也會停止實際占用 11434 的 `ollama serve`；它不會停止 PostgreSQL 或 VS Code。清理完成時預期 `5432=True`，`11434/4000/8001/8002/8003=False`。PowerShell 若因 execution policy 阻擋本機腳本，可執行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop_windows_stack.ps1
+```
+
+不要用未限制 CommandLine／repository 範圍的批次 `Stop-Process -Force` 取代這個腳本。
 
 ## 17. 安裝前或服務停止時可做的靜態檢查
 

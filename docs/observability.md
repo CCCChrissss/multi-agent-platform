@@ -3,7 +3,7 @@
 Workflow 狀態與 Agent 內部的 LLM、MCP tool、memory 操作會寫入 PostgreSQL。開始前先確認 `.env` 的 `PERSISTENCE_DATABASE_URL` 指向你實際使用的資料庫；目前 Windows 實機資料庫是 `agent_architecture_test`，原作者 macOS 範例使用 `agent_architecture`。
 
 > [!NOTE]
-> 2026-08-26 五個常駐服務都已停止，完整語音 workflow 尚未跑通。以下查詢方式曾在本機資料庫驗證，但查到的可能是先前執行紀錄，不代表服務目前正在運作。
+> 2026-08-27 已用本頁查詢方式確認 `thread_id=e138228b-317b-4cc3-bc75-8496b26e14f2` 的 `stt_check_notify` 為 `completed`，且三個 agent、MCP tool 與 memory writer 都有 audit log。查到歷史成功紀錄仍不代表服務現在持續運作，應另外檢查 port 與即時 terminal log。
 
 ## thread_id 從哪裡來
 
@@ -14,8 +14,10 @@ Windows / PowerShell：
 ```powershell
 .\.venv\Scripts\python.exe -m orchestrator.trigger `
     --workflow-def workflows/definitions/stt_check_notify.yaml `
-    --payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'
+    --payload '{\"audio_ref\":\"samples/gen_tsmc_01.wav\"}'
 ```
+
+以上是目前 VS Code 使用的 Windows PowerShell 5.1 實機寫法；`\"` 用來避免原生 `.exe` 參數處理移除 JSON 雙引號。PowerShell 7 則使用未跳脫形式 `--payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'`。
 
 macOS / Bash：
 
@@ -113,7 +115,7 @@ WHERE thread_id = '<thread_id>'
 ORDER BY created_at;
 ```
 
-`stt_check_notify` 的 Agent LLM 呼叫預期使用 `local-qwen`。embedding 會使用 `local-embed`；兩者角色不同。
+`stt_check_notify` 的 Agent LLM 呼叫目前預期使用 `gemini-cheap`。embedding 仍使用 `local-embed`；兩者角色不同。
 
 ## 看即時 process log
 
@@ -150,4 +152,4 @@ checkpoint 以 `thread_id` 描述一次執行；long-term memory 以 `(namespace
 4. 對應 port 是否有 listener。
 5. 第一個 Honcho terminal 中該 process 的 log。
 6. `call_log.is_error=true` 的最後一筆 request / response。
-7. 若卡在 `stt`，優先檢查 Breeze 權重與 PyTorch；若卡在 `check`，優先檢查 4000 / `local-qwen`；若卡在 memory，優先檢查 PostgreSQL / `local-embed`。
+7. 若卡在 `stt`，先區分是 Gemini 決策呼叫還是 Breeze 工具／權重；若卡在 `check`，優先檢查 4000 / `gemini-cheap` 與 `GEMINI_API_KEY`；若卡在 memory，優先檢查 PostgreSQL / `local-embed`。
