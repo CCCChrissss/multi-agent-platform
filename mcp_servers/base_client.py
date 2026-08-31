@@ -11,15 +11,39 @@ connection instead of spawning a fresh server process per tool call.
 
 from __future__ import annotations
 
+import os
 from contextlib import AsyncExitStack
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 
+# The MCP SDK deliberately inherits only a small platform-level environment
+# whitelist for stdio children.  Keep that security boundary, but add the two
+# non-secret runtime settings this repository needs on Windows.  In particular,
+# without UV_CACHE_DIR every `uv run` MCP child falls back to the C-drive cache
+# even when the parent process was explicitly configured to use D:.
+_SAFE_PROJECT_ENV_VARS = ("UV_CACHE_DIR", "PYTHONUTF8")
+
+
+def _with_safe_project_env(server_params: StdioServerParameters) -> StdioServerParameters:
+    inherited = {
+        key: value
+        for key in _SAFE_PROJECT_ENV_VARS
+        if (value := os.environ.get(key)) is not None
+    }
+    if not inherited:
+        return server_params
+
+    # Explicit per-server values (for example MCP_CALLING_PRINCIPAL, or a
+    # deliberately overridden cache path) win over inherited parent values.
+    env = {**inherited, **(server_params.env or {})}
+    return server_params.model_copy(update={"env": env})
+
+
 class MCPClient:
     def __init__(self, server_params: StdioServerParameters) -> None:
-        self._server_params = server_params
+        self._server_params = _with_safe_project_env(server_params)
         self._stack = AsyncExitStack()
         self.session: ClientSession | None = None
 

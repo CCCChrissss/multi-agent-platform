@@ -43,30 +43,16 @@ uv run python -m mcp_servers.memory.smoke_test
 
 ### Windows D 槽 uv cache 注意事項
 
-這台電腦的 MCP SDK stdio 子行程不會自動繼承 `UV_CACHE_DIR`，直接執行上面前五個測試可能退回 `C:\Users\User\AppData\Local\uv\cache` 並在 server 初始化前失敗。這是子行程環境問題，不是 MCP assertion 失敗。
+這台電腦曾因 MCP SDK stdio 子行程沒有繼承 `UV_CACHE_DIR`，退回 `C:\Users\User\AppData\Local\uv\cache` 並在 server 初始化前失敗。此問題會讓 smoke test 失敗，也會使 Agent Runtime 在 lifespan 階段收到 `McpError: Connection closed`。
 
-目前可用的一次性 PowerShell 驗證方式：
+[mcp_servers/base_client.py](../mcp_servers/base_client.py) 現在會將 parent process 的 `UV_CACHE_DIR` 與 `PYTHONUTF8` 明確傳給 MCP stdio 子行程，不會複製 API key、資料庫密碼或整份 environment。在同一個 PowerShell 先設定：
 
 ```powershell
 $env:PYTHONUTF8 = '1'
 $env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
-$smokeModules = @(
-    'mcp_servers.stt.smoke_test',
-    'mcp_servers.format_check.smoke_test',
-    'mcp_servers.lookup.smoke_test',
-    'mcp_servers.notified.smoke_test',
-    'mcp_servers.calc.smoke_test'
-)
-
-foreach ($module in $smokeModules) {
-    $env:MCP_SMOKE_MODULE = $module
-    .\.venv\Scripts\python.exe -B -c "import asyncio, importlib, os; from mcp.client.stdio import get_default_environment; t=importlib.import_module(os.environ['MCP_SMOKE_MODULE']); env=get_default_environment(); env['UV_CACHE_DIR']=os.environ['UV_CACHE_DIR']; t._PARAMS.env=env; asyncio.run(t.main())"
-    if ($LASTEXITCODE -ne 0) { break }
-}
-Remove-Item Env:MCP_SMOKE_MODULE -ErrorAction SilentlyContinue
 ```
 
-這個 wrapper 只調整測試子行程環境，不修改 production code。正式修法應另開 Windows tooling 階段評估，不在這次 CI 契約修正中順便擴張。
+之後可直接執行本節上方的 smoke test，不再需要改寫各測試模組的 `_PARAMS.env`。安全邊界由 `mcp_servers.base_client_env_smoke_test` 驗證。
 
 每份至少驗三件事：(1) 工具清單與參數 schema 符合預期、(2) 正常輸入回正確結構、(3) 壞輸入
 回的是分類過的錯誤（`ToolInputError`/`ToolDependencyError`，見

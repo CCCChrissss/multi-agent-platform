@@ -54,7 +54,7 @@ steps:
     command_type: check.run
     completion_type: check.completed
     # was llm/exclusion_judge.py's own MODEL_NAME module constant (P5).
-    model: claude-haiku
+    model: gemini-cheap
     input_schema:
       type: object
       required: [transcript]
@@ -132,7 +132,7 @@ steps:
     command_type: notified.run
     completion_type: notified.completed
     # was llm/notify_agent.py's own MODEL_NAME module constant (P5).
-    model: claude-haiku
+    model: gemini-cheap
     # llm/notify_agent.py is scenario-agnostic (docs/exclusion-scenario-plan.md
     # §3.5/P0), so should_notify/subject/body are derived here via
     # input_mapping instead of being part of check's judgment output

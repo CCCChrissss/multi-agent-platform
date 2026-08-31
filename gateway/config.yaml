@@ -3,14 +3,10 @@ model_list:
     litellm_params:
       model: ollama_chat/qwen2.5:3b
       api_base: http://localhost:11434
-  # 2026-08-17: promoted to the platform default for every agent that used
-  # to declare gemini-cheap/gemini-strong (see workflows/definitions/*.yaml's
-  # `model:` fields) -- explicit user request to stop using Gemini. Only
-  # `check`'s TSMC branch (stt_check_notify.yaml) still uses local-qwen,
-  # unaffected by this change. exclusion_judge's check branch moved off
-  # gemini-strong too, despite the eval-backed rationale below its own
-  # MODEL_NAME comment for why gemini-strong was chosen -- that comparison
-  # hasn't been rerun against this model yet, see TODO.md.
+  # Provider aliases remain available independently of which workflow uses
+  # them. The active choice belongs to workflows/definitions/*.yaml's
+  # per-step `model:` fields; changing an alias here does not switch a
+  # running workflow by itself.
   - model_name: claude-haiku
     litellm_params:
       model: anthropic/claude-haiku-4-5-20251001
