@@ -111,7 +111,7 @@ PERSISTENCE_DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/agen
 目前金鑰規則：
 
 - 目前 `stt_check_notify` 的三個 agent step 都使用 `gemini-cheap`，需要有效的 `GEMINI_API_KEY`；乾淨重啟後已完成實際呼叫與一次完整 run。
-- `stt_exclusion_notify` 仍使用 `gemini-cheap` 與 `claude-haiku`，沒有有效金鑰時不能執行。
+- `stt_exclusion_notify` 的三個 agent step 目前也都使用 `gemini-cheap`，需要有效的 `GEMINI_API_KEY`，不需要 Anthropic key。
 - 不要為本機測試填假 key，也不要把真實 key 寫進 `.env.example`。
 
 ## 5. Ollama 與本機模型
@@ -169,7 +169,7 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_exclusion_notify.yaml'
 ```
 
-但這份目前仍需要 Anthropic / Gemini key，尚未納入無雲端金鑰的本機路徑。只在之後具備 provider 條件時使用。
+這份目前需要有效的 `GEMINI_API_KEY`，並且必須先完成保單記憶 seed；不需要 Anthropic key。
 
 `orchestrator.trigger --workflow-def` 只決定這次要觸發哪份定義，不能替已啟動的 Runtime / workers 切換設定。切換 workflow 時，兩批 Honcho 都要停止、設定同一個 `$env:WORKFLOW_DEF_PATH`，再重新啟動。
 
@@ -292,6 +292,27 @@ $embedResponse.data[0].embedding.Count
 
 `bge-m3` 在這個專案的 embedding 維度應為 `1024`。
 
+### 除外責任場景的一次性保單 seed
+
+只有 `stt_exclusion_notify` 需要這一步。先在 pgAdmin Query Tool 查詢：
+
+```sql
+SELECT count(*)
+FROM store
+WHERE prefix LIKE '_global.semantic.insurance_product.%';
+```
+
+目前 Windows 實機是 `59`，與 [kgi_ltc.yaml](../data/insurance_product/kgi_ltc.yaml) 的理論筆數一致，表示 seed 已完成，可以跳過。新的空資料庫或筆數不符時，先確認本節的 `local-embed` 呼叫回傳 1024 維，再執行：
+
+```powershell
+Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$env:PYTHONUTF8 = '1'
+$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+.\.venv\Scripts\python.exe -m scripts.seed_insurance_memory
+```
+
+成功時最後會印出 `Seeded 59 item(s) total.`。腳本使用固定 key upsert，可安全重跑；但已經是 59 筆時沒有重跑的必要。Windows 不使用 `uv run python -m scripts.seed_insurance_memory`，避免 `uv` 回到 C 槽預設 cache。若 traceback 最後是 `KeyboardInterrupt`，代表執行被手動中止，不是 OpenAI SDK 或 seed 資料主動拋出的錯誤。
+
 ## 10. Agent Runtime 基本 request
 
 這個 request 不經過 STT，可獨立確認 port 8003 的 `check` route 與 `local-qwen`：
@@ -348,7 +369,8 @@ Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 ### 用 repository 內建工具
 
 ```powershell
-.\.venv\Scripts\python.exe -m persistence.history <thread_id>
+$ThreadId = 'REPLACE_WITH_THREAD_ID'
+.\.venv\Scripts\python.exe -m persistence.history $ThreadId
 ```
 
 輸出包含 checkpoint 與 `call_log`。詳細欄位見 [observability.md](observability.md)。

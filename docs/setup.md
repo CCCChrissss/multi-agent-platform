@@ -138,7 +138,7 @@ Test-NetConnection -ComputerName 127.0.0.1 -Port 4000 -InformationLevel Quiet
 - `claude-haiku`：需要有效 `ANTHROPIC_API_KEY`。
 - `gemini-cheap` / `gemini-strong`：需要有效 `GEMINI_API_KEY`。
 
-目前沒有 Anthropic / Gemini key，因此雲端 alias 保留但不可實際使用；不要填假 credential。
+如果沒有 Anthropic / Gemini key，對應的雲端 alias 仍會出現在模型清單，但實際呼叫會失敗；不要填假 credential。
 
 ## STT / Breeze-ASR-25
 
@@ -182,13 +182,23 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 
 ### `stt_exclusion_notify` 查不到條文
 
-這是上游場景的必要前置，原作者流程要求先執行：
+這是上游場景的必要前置。Windows 先查目前資料庫：
+
+```sql
+SELECT count(*)
+FROM store
+WHERE prefix LIKE '_global.semantic.insurance_product.%';
+```
+
+目前實機為 59，與來源 YAML 的理論筆數相同，已完成時不要重跑。新的空資料庫或筆數不符時，先確認 5432、11434、4000 與 `local-embed`，再執行：
 
 ```powershell
+$env:PYTHONUTF8 = '1'
+$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
 .\.venv\Scripts\python.exe -m scripts.seed_insurance_memory
 ```
 
-但這個 workflow 目前仍依賴 Anthropic / Gemini key，本機尚未完成無雲端金鑰改造與端到端驗證；保留此步驟作為上游功能參考。
+腳本以固定 key upsert，可安全重跑。若停在 `from openai import ...` 且 traceback 最後是 `KeyboardInterrupt`，代表 import 尚未完成時被手動中止；2026-08-27 Windows 實測完整 seed module import 約 2.3 秒。目前這個 workflow 的 `stt`、`check`、`notified` 都宣告 `gemini-cheap`，執行時需要有效的 `GEMINI_API_KEY`，不需要 Anthropic key。
 
 ## Smoke test
 
