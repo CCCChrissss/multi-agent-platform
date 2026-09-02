@@ -3,7 +3,7 @@
 專案主要使用可直接執行的 smoke test，而不是 pytest。本文件同時提供 Windows / PowerShell 與 macOS / Bash 指令；Windows 服務與模型現況見 [current-windows-status.md](current-windows-status.md)。
 
 > [!IMPORTANT]
-> commit `39d6449` 的 GitHub Actions 中，`windows-static-compatibility` 與 `mcp-server-smoke-tests` 成功，`gather-concurrency-smoke-test` 失敗。2026-08-27 已在本機修正過時的 gather scenario 並通過相關測試；最新遠端 GitHub Actions 尚未用 GitHub CLI 重查。
+> commit `39d6449` 的 GitHub Actions 曾因過時 gather scenario 失敗，後續已修正。commit `e42fc04` 的 [GitHub Actions run 33361205275](https://github.com/CCCChrissss/multi-agent-platform/actions/runs/33361205275) 已確認 `windows-static-compatibility`、`mcp-server-smoke-tests`、`gather-concurrency-smoke-test` 全部成功。
 
 ## 服務停止時先跑的檢查
 
@@ -91,7 +91,7 @@ uv run python -m workflows.parity_check
 - 後兩個需要 `honcho start` 已經在跑（它們會呼叫真的 LLM 與 agent service）。
 - 三個都會在 process 內自己起需要的 master/worker。
 - ⚠️ **跑之前要先關掉 `honcho -f Procfile.workers start`**——那批 process 的 consumer group 跟測試同名，會搶走測試的命令，讓用假 handler 的情境失效。
-- `gather_concurrency_smoke_test.py`（repo 根目錄）不需要任何 process。Windows 用 `.\.venv\Scripts\python.exe -B gather_concurrency_smoke_test.py`，macOS 用 `uv run python gather_concurrency_smoke_test.py`。2026-08-27 已在 Windows 本機驗證修正後的三個 scenario 全部通過；此結論不等於最新遠端 CI 已重查。
+- `gather_concurrency_smoke_test.py`（repo 根目錄）不需要任何 process。Windows 用 `.\.venv\Scripts\python.exe -B gather_concurrency_smoke_test.py`，macOS 用 `uv run python gather_concurrency_smoke_test.py`。2026-08-27 已在 Windows 本機驗證修正後的三個 scenario 全部通過；後續 commit `e42fc04` 的 GitHub Actions 三個 job 也已全部成功，詳見 [current-windows-status.md](current-windows-status.md#測試狀態)。
 
 寫一個新工具卻要跑完整條 agent 鏈路才知道對不對，回饋迴路太長，而且工具本身的問題（回傳結構
 錯、壞輸入漏 traceback）會被 LLM 的不確定性蓋掉——這是上面那層單一 MCP server smoke test存在
@@ -112,9 +112,45 @@ uv run python -m persistence.memory_smoke_test
 
 只需要 `honcho start` 在跑（會呼叫真的 embedding），不需要 `Procfile.workers`。
 
-## 記憶蒸餾 pipeline（P0-P5，上游流程；Windows 尚未重新驗證）
+## 記憶蒸餾 pipeline（P0-P5）
 
-[knowledge-distillation-plan.md](knowledge-distillation-plan.md) 的 episodic -> 候選 procedural 規則 -> 人工審核 -> 生效整條鏈路。以下保留原作者的完整步驟與 Bash 寫法，尚未在目前 Windows / 無 Anthropic / Gemini key 的環境重新驗證。`stt_exclusion_notify` 仍依賴雲端 provider，因此現在不要把這一節當成本機可執行的 happy path。
+[knowledge-distillation-plan.md](knowledge-distillation-plan.md) 的 episodic -> 候選 procedural 規則 -> 人工審核 -> 生效整條鏈路。P0–P5 核心程式已存在；actor-distinction demo 曾執行到 candidate staging／procedural review，但 2026-09-01 已移除所有雲端 API key，目前無法繼續執行需要 Gemini 的蒸餾與評測。詳細服務需求、資料狀態、SQL 與排錯見 [knowledge-distillation-windows.md](knowledge-distillation-windows.md)。
+
+Windows / PowerShell 主線（需要寫入或呼叫模型的步驟，執行前先確認服務與 API 成本）：
+
+```powershell
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+Set-Location -LiteralPath $RepoRoot
+
+$env:PYTHONUTF8 = '1'
+$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+
+# 1. 先核准確認正確的 episodic；pending 案例不會成為蒸餾原料
+.\.venv\Scripts\python.exe -m scripts.review_episodic `
+    --scope stt_exclusion_notify/check
+
+# 2. 建立 default tenant baseline
+.\.venv\Scripts\python.exe -m evals.run_eval `
+    --tenant default `
+    --repeats 3
+
+# 3. 只從 active episodic 產生 pending procedural
+.\.venv\Scripts\python.exe -m scripts.distill_procedural `
+    --scope stt_exclusion_notify/check `
+    --limit 20
+
+# 4. stage + baseline/candidate/evidence 比較 + 人工決策
+.\.venv\Scripts\python.exe -m scripts.review_memory `
+    --scope stt_exclusion_notify/check `
+    --repeats 3
+```
+
+上方不是單純 smoke test：步驟 1、3、4 會修改 memory store，步驟 2–4 會呼叫真實模型並留下 call log。不要依賴文件中的歷史筆數；先用 [knowledge-distillation-windows.md](knowledge-distillation-windows.md) 的唯讀 SQL 確認目前 episodic／procedural 狀態。若選定 scope 沒有 active episodic，步驟 3 回報沒有可蒸餾資料是預期行為。
+
+macOS / Bash（原作者流程，保留原有指令與順序）：
 
 ```bash
 # 1. 保單條款灌進長期記憶（check 查證據用，不做過就是空的）

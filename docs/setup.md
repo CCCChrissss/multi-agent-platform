@@ -140,6 +140,8 @@ Test-NetConnection -ComputerName 127.0.0.1 -Port 4000 -InformationLevel Quiet
 
 如果沒有 Anthropic / Gemini key，對應的雲端 alias 仍會出現在模型清單，但實際呼叫會失敗；不要填假 credential。
 
+2026-09-01 已移除本機所有雲端 API key，因此目前 `claude-haiku`、`gemini-cheap`、`gemini-strong` 都不可實際呼叫。兩份 workflow 的三個 step 都使用 `gemini-cheap`，所以完整 workflow 暫時不可執行；本機 `local-qwen`、`local-embed` 與 `breeze-asr` 不受雲端 key 影響。
+
 ## STT / Breeze-ASR-25
 
 ### 8001 能啟動，但第一次轉錄失敗或長時間等待
@@ -152,7 +154,7 @@ Port listener 只代表 FastAPI process 已啟動，不代表 Breeze 權重與�
 - `samples/gen_tsmc_01.wav` 直接推論成功，峰值 CUDA reserved 約 4.51 GiB。
 - 目前沒有 FFmpeg；[services/stt/breeze_asr.py](../services/stt/breeze_asr.py) 會用既有 `librosa` / `soundfile` 載入及重採樣，不再把音檔路徑直接交給 Transformers。
 
-目前尚未重驗的是 8001 HTTP route 和 LiteLLM `breeze-asr` alias。啟動前在同一個 PowerShell 或 `.env` 設定 `HF_HUB_CACHE=D:\Projects\multi-agent平台架設\.hf-cache`，否則 process 可能回到 C 槽預設快取，看不到已下載的權重。
+8001 HTTP route、LiteLLM `breeze-asr` alias、Breeze 直接推論及 workflow 內轉錄都曾在 Windows 實機通過。若目前再次失敗，先確認啟動該 process 的同一個 PowerShell 已設定正確 `HF_HUB_CACHE`；否則 process 可能回到使用者目錄的預設快取，看不到已下載的權重。
 
 ## Workflow 選擇與 event-driven workers
 
@@ -204,7 +206,7 @@ $env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
 
 ### `gather_concurrency_smoke_test.py` 在 commit `39d6449` 失敗
 
-原因不是正式輸出應改回舊字串，而是 gather scenario 使用 `should_notify=false` 後會在任何並行工作前直接回傳 `[]`，已經測不到原本要驗證的 concurrency。2026-08-27 本機已把該 scenario 改成 `should_notify=true` 並模擬成功 tool call，三個 gather scenario 全部通過；負分支安全短路則由 `llm.notify_agent_smoke_test` 獨立驗證。新的遠端 CI 結果要等修正 push 後確認。
+原因不是正式輸出應改回舊字串，而是 gather scenario 使用 `should_notify=false` 後會在任何並行工作前直接回傳 `[]`，已經測不到原本要驗證的 concurrency。2026-08-27 本機已把該 scenario 改成 `should_notify=true` 並模擬成功 tool call，三個 gather scenario 全部通過；負分支安全短路則由 `llm.notify_agent_smoke_test` 獨立驗證。後續 commit `e42fc04` 的三個 GitHub Actions job 也已全部成功，連結與歷史失敗紀錄見 [current-windows-status.md](current-windows-status.md#測試狀態)。
 
 ### Agent Runtime / MCP smoke test 報 `Connection closed` 或 uv cache 初始化失敗
 

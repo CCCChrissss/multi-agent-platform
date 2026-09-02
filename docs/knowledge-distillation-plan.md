@@ -1,7 +1,20 @@
 # 知識蒸餾與品質關卡（M5）實作評估
 
 > [!NOTE]
-> 這是知識蒸餾的設計與階段性驗證紀錄。相關 CLI / Demo UI 尚未在目前 Windows、無 Anthropic / Gemini key 的環境重新完整驗證；現行狀態見 [current-windows-status.md](current-windows-status.md)。
+> 這是知識蒸餾的歷史設計與階段性驗證紀錄。文件前段保留當時「尚未實作」的問題分析，後段則記錄 P0–P5 的實際落地；不要把早期現況描述當成目前程式狀態。2026-08-31 的 Windows 操作主線見 [knowledge-distillation-windows.md](knowledge-distillation-windows.md)，環境狀態見 [current-windows-status.md](current-windows-status.md)。
+
+## 目前實作狀態（2026-08-31）
+
+| 階段 | 目前程式狀態 | 主要實作 |
+|---|---|---|
+| P0 | 已實作 | `persistence/memory.py` 的 active-only gate 與 status backfill |
+| P1 | 已實作 | `evals/check_cases.yaml`、`evals/run_eval.py` |
+| P2 | 已實作 | `scripts/distill_procedural.py` 產生 pending procedural |
+| P3 | 核心閉環已實作 | eval tenant staging、baseline/candidate 比較、人工 approve/reject |
+| P4 | 已實作 | procedural 審核時可 edit 並重新評測 |
+| P5 | 已實作 | memory writer 寫 pending episodic，先經人工審核才可供蒸餾 |
+
+Windows 在開始 actor-distinction demo 前曾有 59 筆 active semantic、3 筆 pending episodic、0 筆 active episodic、0 筆 procedural；這是歷史起點，不是目前 DB 聲明。後續已實際進行到 candidate staging／procedural review，exact 數量應依 [knowledge-distillation-windows.md](knowledge-distillation-windows.md) 的唯讀 SQL 重查。下方第 0–4 節是實作前的設計快照；第 5 節起包含後續落地與驗證紀錄。
 
 ## 0. 這份文件在回答什麼
 
@@ -9,11 +22,13 @@
 
 > 累積的 episodic 經驗 → LLM 歸納出原則性的規則 → **人審核** → 成為 procedural 記憶 → 強制注入 agent
 
-這段目前**完全不存在**。本文評估要做這件事需要動哪些東西、分幾步、以及有哪些問題必須先決定。
+> **歷史快照**：以下「完全不存在」描述的是本文件建立當時的狀態；目前實作結果以上方狀態表與第 5 節為準。
+
+這段在當時**完全不存在**。本文評估要做這件事需要動哪些東西、分幾步、以及有哪些問題必須先決定。
 
 同時把 [long-term-memory-plan.md](long-term-memory-plan.md) M5「品質關卡」那節（原文只有四個 bullet）展開成可執行的步驟——這兩件事寫在同一份文件，是因為它們**共用同一個 `status` 機制、而且順序不能顛倒**（見 §2）：蒸餾負責「生出候選規則」，關卡負責「候選規則能不能生效」，缺任何一半，另一半都不該上線。
 
-> **這份文件是評估，不是已定案的實作範圍。** 底下每一節的「待確定」都是真的還沒決定，不是留白待補。
+> **歷史閱讀方式**：底下早期章節的「待確定」是當時真實的未決事項；後續是否已定案或落地，必須對照第 5 節及目前程式碼。
 
 ---
 

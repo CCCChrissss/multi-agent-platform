@@ -117,7 +117,8 @@ psql -d agent_architecture_test -c "
 "
 
 # 用專案內建工具查(state snapshot + call log 一起印,底層就是包上面這些查詢,不用寫 SQL)
-.\.venv\Scripts\python.exe -m persistence.history <thread_id>
+$ThreadId = 'REPLACE_WITH_THREAD_ID'
+.\.venv\Scripts\python.exe -m persistence.history $ThreadId
 
 # 危險：清空所有紀錄。只有明確要丟棄開發資料時才能執行，先確認資料庫名稱。
 psql -d agent_architecture_test -c "

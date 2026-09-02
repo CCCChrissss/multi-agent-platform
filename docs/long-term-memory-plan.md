@@ -1,7 +1,20 @@
 # 長期記憶（Long-Term Memory）導入計畫
 
 > [!NOTE]
-> 這是長期記憶的歷史設計與落地紀錄，包含原作者 macOS 環境的驗證內容。PostgreSQL / pgvector / `local-embed` 的目前 Windows 實機狀態見 [current-windows-status.md](current-windows-status.md)。
+> 這是長期記憶的歷史設計與落地紀錄，包含原作者 macOS 環境的驗證內容。2026-08-31 的 Windows 操作方式見 [knowledge-distillation-windows.md](knowledge-distillation-windows.md)，PostgreSQL / pgvector / `local-embed` 實機狀態見 [current-windows-status.md](current-windows-status.md)。
+
+## 目前架構摘要（2026-08-31）
+
+- 長期記憶已獨立於 checkpointer 與 `orchestrator_runs`，由 PostgreSQL `store`／`store_vectors` 保存。
+- namespace 固定為 `(tenant, kind, *scope)`；目前 kind 為 semantic、episodic、procedural。
+- `recall()`／`browse()` 只讀 `status="active"`，pending 資料不會進入 agent。
+- event-driven `memory_writer` 會把成功 step 依 YAML `memory_write` 規則寫成 pending episodic。
+- episodic 不再作為 few-shot 直接注入 agent，只作為人工審核後的蒸餾原料。
+- procedural 經 distiller 產生後仍為 pending，必須通過 eval tenant 比較與人工審核才會 active。
+- embedding 維持透過 LiteLLM 的 `local-embed`／Ollama `bge-m3`，不改成生成模型。
+- memory policy 仍是 provisional；本輪只整理文件，不變更任何權限。
+
+本文件後續 M1–M5 章節保留各階段形成決策的過程。若歷史段落與目前程式碼不同，操作時以 [knowledge-distillation-windows.md](knowledge-distillation-windows.md) 與實際程式碼為準。
 
 ## 0. 這份文件在回答什麼
 

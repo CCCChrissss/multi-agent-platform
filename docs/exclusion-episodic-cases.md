@@ -3,8 +3,7 @@
 > [!NOTE]
 > 本文件保留原作者的種子資料對照。資料與腳本仍在 repository，但目前 Windows 文件階段未重新執行 seed / distillation 流程；現行狀態見 [current-windows-status.md](current-windows-status.md)。
 
-`scripts/seed_exclusion_episodic_examples.py` 寫進 `default/episodic/stt_exclusion_notify/check` 的 6 筆案例——這是
-`scripts/distill_procedural.py`（P2 蒸餾器）唯一的輸入來源。案例的 `key` 看不出逐字稿內容，這份表補上這一層，蒸餾出新規則、
+`scripts/seed_exclusion_episodic_examples.py` 可寫進 `default/episodic/stt_exclusion_notify/check` 的 6 筆案例，是原作者為 P2 蒸餾器準備的種子語料，不是目前 DB 已存在資料的聲明，也不是唯一可能來源；production `memory_writer` 經人工核准的 active episodic 同樣會被蒸餾器讀取。案例的 `key` 看不出逐字稿內容，這份表補上這一層，蒸餾出新規則、
 或要加案例時先看這裡。
 
 所有案例都用真實 `judge_exclusion()` 服務驗證過（見各筆備註的日期），不是手寫猜測。

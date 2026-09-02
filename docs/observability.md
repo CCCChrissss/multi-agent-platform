@@ -43,7 +43,8 @@ LIMIT 5;
 Windows / PowerShell：
 
 ```powershell
-.\.venv\Scripts\python.exe -m persistence.history <thread_id>
+$ThreadId = 'REPLACE_WITH_THREAD_ID'
+.\.venv\Scripts\python.exe -m persistence.history $ThreadId
 ```
 
 macOS / Bash：

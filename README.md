@@ -1,9 +1,9 @@
 # Multi-Agent Platform
 
-公司內部多 agent 平台的原型（平台目標見 [CLAUDE.md](CLAUDE.md)，Codex 開發規範見 [AGENTS.md](AGENTS.md)）。平台上目前有**兩個示範 workflow**，用來驗證基礎建設堪不堪用，都是同一個形狀：語音轉文字 → 檢核 → 通知。
+公司內部多 agent 平台的原型（現行專案目標與協作規範見 [AGENTS.md](AGENTS.md)；[CLAUDE.md](CLAUDE.md) 保留原作者的 Claude Code 脈絡）。平台上目前有**兩個示範 workflow**，用來驗證基礎建設堪不堪用，都是同一個形狀：語音轉文字 → 檢核 → 通知。
 
 > [!IMPORTANT]
-> 本 repository 同時保留原作者的 **macOS / Bash / Claude Code** 流程，並漸進新增目前實機的 **Windows / PowerShell / Codex** 流程。Windows 於 2026-08-27 的安裝狀態、已驗證範圍與阻擋項目見 [docs/current-windows-status.md](docs/current-windows-status.md)；macOS 內容保留上游操作方式，但尚未由目前維護者重新實機驗證。
+> 本 repository 同時保留原作者的 **macOS / Bash / Claude Code** 流程，並漸進新增目前實機的 **Windows / PowerShell / Codex** 流程。Windows 的日期化驗證快照見 [docs/current-windows-status.md](docs/current-windows-status.md)；macOS 內容保留上游操作方式，但尚未由目前維護者重新實機驗證。
 
 | | [stt_check_notify.yaml](workflows/definitions/stt_check_notify.yaml) | [stt_exclusion_notify.yaml](workflows/definitions/stt_exclusion_notify.yaml) |
 |---|---|---|
@@ -77,559 +77,68 @@ Service 層     services/{stt,notified}/  <------------------------+
 
 ## Windows / PowerShell 執行（目前主線）
 
-本節以 **Windows PowerShell 5.1、VS Code、Python 3.11、uv 與 D 槽 workspace** 為基準，涵蓋安裝、啟動、workflow 切換、觸發、資料庫查詢與關閉。更細的背景與錯誤分類見 [Windows 安裝手冊](docs/windows-setup.md)、[疑難排解](docs/setup.md) 與 [觀測手冊](docs/observability.md)。
+Windows 的安裝、啟動、workflow 切換、trigger、停止與常見錯誤，統一維護在 [Windows 主操作手冊](docs/windows-setup.md)。README 只保留入口與執行順序，避免同一套 PowerShell 指令在多處漂移。
 
 > [!IMPORTANT]
-> Windows 不要複製後方 macOS / Bash 區塊的 `uv run honcho start`、`export`、`brew` 或 Bash 反斜線續行。繁體中文 Windows 必須在**同一個 PowerShell** 先設定 `$env:PYTHONUTF8 = '1'`，再啟動 Honcho，否則可能以 CP950 解碼 UTF-8 `.env` 而失敗。
+> 請不要直接從網路片段或後方 macOS / Bash 歷史區塊拼接指令。每個 VS Code PowerShell terminal 都是獨立 session，必須依 Windows 主操作手冊重新設定 repository 路徑與必要環境變數。
 
-### 0. 先理解三個 terminal
+### 從零開始的閱讀順序
 
-整個 event-driven workflow 使用三個 VS Code PowerShell terminal：
+1. [目前 Windows 實機驗證快照](docs/current-windows-status.md)：確認哪些功能曾成功、哪些尚未完成。
+2. [Windows 主操作手冊](docs/windows-setup.md)：完成 Python 3.11、uv、PostgreSQL、pgvector、Ollama、模型與專案環境安裝。
+3. [測試手冊](docs/testing.md)：依前置條件執行靜態、smoke 與整合測試。
+4. [觀測手冊](docs/observability.md)：使用 `thread_id` 查 run、checkpoint 與 Agent／MCP call log。
+5. [知識蒸餾 Windows 手冊](docs/knowledge-distillation-windows.md)：進行 episodic 人審、procedural 蒸餾、candidate eval 與核准。
 
-| Terminal | 是否保持開啟 | 用途 |
+### Event-driven workflow 的最短路徑
+
+完整指令以 [docs/windows-setup.md](docs/windows-setup.md) 為準，順序固定如下：
+
+| Terminal | 用途 | 必須保持開啟 |
 |---|---|---|
-| A：Services | 是 | `Procfile`：Ollama、LiteLLM、STT、notified、Agent Runtime |
-| B：Workers | 是 | `Procfile.workers`：Master、`worker-all`、`memory-writer` |
-| C：Client | 否 | 檢查 port／model、trigger、查詢結果 |
+| A：Services | 依選定的 `WORKFLOW_DEF_PATH` 啟動 `Procfile`：Ollama、LiteLLM、STT、notified、Agent Runtime | 是 |
+| B：Workers | 使用與 Terminal A 相同的 `WORKFLOW_DEF_PATH` 啟動 `Procfile.workers` | 是 |
+| C：Client | 檢查 port/model、trigger、保存 `thread_id`、查詢結果 | 否 |
 
-正確順序是：A 啟動 → C 驗證五個 port → B 啟動 → C trigger。切換 workflow 時，A、B 必須一起停止並用相同 YAML 重新啟動。
+正確順序是：
 
-### 1. Windows 前置工具
+1. 選擇 `stt_check_notify.yaml` 或 `stt_exclusion_notify.yaml`。
+2. Terminal A 啟動 services。
+3. Terminal C 確認 11434、4000、8001、8002、8003，以及實際需要的 model provider。
+4. Terminal B 使用同一份 workflow YAML 啟動 workers。
+5. Terminal C trigger 同一份 workflow，保存輸出的 `thread_id`。
+6. 依觀測手冊查詢 `orchestrator_runs`、checkpoint 與 `call_log`。
+7. 完成後依 Windows 主操作手冊關閉並再次確認 port。
 
-需要以下工具：
+`orchestrator.trigger --workflow-def` 只指定本次觸發的定義，不會熱切換已經啟動的 Agent Runtime 或 workers。切換 workflow 時，Terminal A 與 B 都必須停止並以相同的 `WORKFLOW_DEF_PATH` 重新啟動。
 
-- [Git for Windows](https://git-scm.com/downloads/win)
-- [uv 官方 Windows 安裝方式](https://docs.astral.sh/uv/getting-started/installation/)
-- [PostgreSQL Windows installer](https://www.postgresql.org/download/windows/)
-- [pgvector](https://github.com/pgvector/pgvector)
-- [Ollama for Windows](https://ollama.com/download/windows)
-- VS Code（建議使用整合式 PowerShell）
+### Model 與服務責任
 
-安裝 uv 後，開新的 PowerShell 驗證：
+- workflow step 使用哪個 LLM alias，以 [workflows/definitions/](workflows/definitions/) 的 `model:` 為準。
+- alias 對應哪個 provider，以 [gateway/config.yaml](gateway/config.yaml) 為準。
+- `local-embed` 只負責 embedding；`breeze-asr` 只負責語音辨識。
+- LiteLLM 的 `/v1/models` 出現 alias，只代表設定已載入，不代表底層模型或 API key 一定可用。
+- MCP 權限與 memory grant 以 [mcp_servers/policy.yaml](mcp_servers/policy.yaml) 為準。
 
-```powershell
-$uvExe = Join-Path $env:USERPROFILE '.local\bin\uv.exe'
-& $uvExe --version
-```
+目前兩份示範 workflow 都曾在 Windows 完成一次 event-driven 執行；這不等於長時間常駐、異常自動恢復或知識蒸餾全鏈已完成。日期、thread ID 與當時環境見 [current-windows-status.md](docs/current-windows-status.md)。
 
-如果安裝程式把 uv 放在其他位置，請以安裝程式顯示的路徑為準。不要在不知道來源的情況下載替代執行檔。
+> [!WARNING]
+> 2026-09-01 已移除本機所有雲端 API key。目前兩份 workflow 的三個 step 都宣告 `gemini-cheap`，因此只能保留過去成功紀錄，現在無法重新執行完整 workflow。`local-qwen`、`local-qwen3`、`local-embed` 與 `breeze-asr` 不需要雲端 key，但目前 workflow YAML 尚未選用本機 agent model。模型切換方式見 [Windows 操作手冊的模型切換段落](docs/windows-setup.md#切換-workflow-使用的-agent-模型)。
 
-### 2. Clone repository 與建立 Python 3.11 環境
+---
 
-以下路徑是目前實機路徑；其他使用者只需修改 `$RepoRoot`：
+## 原作者 macOS / Bash / Claude Code 操作原文
 
-```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-$WorkspaceRoot = Split-Path -Parent $RepoRoot
-$uvExe = Join-Path $env:USERPROFILE '.local\bin\uv.exe'
+> [!NOTE]
+> 以下內容取自 Windows 遷移前的 README（commit `dd5ec5d`），保留原作者的 macOS / Bash 操作方式供歷史比對。本區塊未由目前 Windows 維護者重新實機驗證，也不會與 Windows 指令混寫。Windows 使用者請回到前面的 Windows 主操作手冊。
 
-$RepoParent = Split-Path -Parent $RepoRoot
-New-Item -ItemType Directory -Force -Path $RepoParent | Out-Null
-Set-Location -LiteralPath $RepoParent
-git clone https://github.com/CCCChrissss/multi-agent-platform.git
-Set-Location -LiteralPath $RepoRoot
+## 從零開始安裝
 
-$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
-$env:HF_HUB_CACHE = Join-Path $WorkspaceRoot '.hf-cache'
-& $uvExe python install 3.11
-& $uvExe venv --python 3.11
-& $uvExe sync
-```
+依序照做，每一步都有驗證方式。卡住的話看 [docs/setup.md](docs/setup.md)（常見錯誤與排除）。
 
-如果 repository 已存在，不要再次 `git clone`；直接從設定 `$RepoRoot` 開始。`uv sync` 會依 [pyproject.toml](pyproject.toml) 與 [uv.lock](uv.lock) 建立 `.venv`，不必每次啟動服務都重跑。
+以下主要指令以 macOS / Bash 為例；Windows / PowerShell 請改看 [docs/windows-setup.md](docs/windows-setup.md)。
 
-驗證：
-
-```powershell
-.\.venv\Scripts\python.exe --version
-.\.venv\Scripts\python.exe -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
-```
-
-第一行必須是 Python 3.11.x。目前 Windows lockfile 使用 PyTorch CUDA 13.2 index；有 NVIDIA GPU 的實機已驗證 `torch.cuda.is_available()` 為 `True`，但沒有相容 GPU 時為 `False` 不代表 Python 環境損壞。
-
-### 3. 安裝 PostgreSQL、建立資料庫與 pgvector
-
-使用 PostgreSQL 官方 Windows installer 安裝 Server、pgAdmin 4 與 Command Line Tools。安裝過程要求設定的 `postgres` 密碼是**使用者自行建立的密碼**，repository 不會產生也不知道這個密碼。
-
-目前實機版本是 PostgreSQL 18.6 與 pgvector 0.8.6。pgvector 必須安裝到同一套 PostgreSQL major version；若 `vector` 不在 available extensions，請依 [pgvector 官方 Windows 說明](https://github.com/pgvector/pgvector#installation-notes---windows) 安裝，不能混用另一套 PostgreSQL 的 extension 檔案。
-
-在 pgAdmin 4 建立資料庫：
-
-1. 展開 `Servers > PostgreSQL 18 > Databases`。
-2. 右鍵 `Databases`，建立 `agent_architecture_test`。
-3. 對 `agent_architecture_test` 開啟 Query Tool。
-4. 執行：
-
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-
-SELECT extversion
-FROM pg_extension
-WHERE extname = 'vector';
-```
-
-查詢必須回傳版本。應用程式資料表會由各模組建立，不需要手動貼 `CREATE TABLE`。
-
-### 4. 建立 `.env`
-
-只在 `.env` 不存在時複製，避免覆蓋既有密碼與 API key：
-
-```powershell
-Set-Location -LiteralPath $RepoRoot
-if (-not (Test-Path -LiteralPath '.env')) {
-    Copy-Item -LiteralPath '.env.example' -Destination '.env'
-}
-```
-
-在 `.env` 至少設定：
-
-```text
-PERSISTENCE_DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/agent_architecture_test
-GEMINI_API_KEY=YOUR_GEMINI_API_KEY
-ANTHROPIC_API_KEY=
-```
-
-`YOUR_PASSWORD` 與 `YOUR_GEMINI_API_KEY` 都是佔位字串，不能原樣保留。若資料庫密碼包含 `@`、`:`、`/` 等 URL 保留字元，必須先做 percent-encoding，否則連線字串會被錯誤切割。不要提交 `.env`，也不要把真實 secret 貼進 README、issue、commit 或終端截圖。
-
-目前兩份 workflow YAML 的 `stt`、`check`、`notified` 都宣告 `gemini-cheap`，因此執行時需要有效的 `GEMINI_API_KEY`。`gateway/config.yaml` 仍保留 `claude-haiku` provider 供未來使用；目前 workflow 沒引用時，`ANTHROPIC_API_KEY` 可以留空。
-
-建議讓 `.env` 中的 `WORKFLOW_DEF_PATH` 保持註解，改由每個 terminal 明確設定。Honcho 會用 `.env` 覆蓋同名的 PowerShell 環境變數；如果 `.env` 寫死另一份 workflow，會造成 Runtime／workers 與 trigger 不一致。
-
-安全檢查（只顯示 workflow 設定，不顯示 secret）：
-
-```powershell
-Select-String -Path .env -Pattern '^WORKFLOW_DEF_PATH='
-```
-
-建議沒有輸出。
-
-### 5. 安裝 Ollama 並把模型放在 D 槽
-
-安裝 Ollama 後，先從 Windows 系統列完全退出 Ollama Desktop，避免背景 server 先占用 11434 並讀取 C 槽預設模型目錄。
-
-在第一個暫時 PowerShell 啟動只供下載模型使用的 server：
-
-```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-$WorkspaceRoot = Split-Path -Parent $RepoRoot
-$ollamaExe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
-
-$env:OLLAMA_MODELS = Join-Path $WorkspaceRoot '.ollama\models'
-& $ollamaExe serve
-```
-
-保持該 terminal 開啟，在第二個 PowerShell 下載模型：
-
-```powershell
-$ollamaExe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
-& $ollamaExe pull qwen2.5:3b
-& $ollamaExe pull bge-m3
-& $ollamaExe list
-```
-
-預期至少看到 `qwen2.5:3b` 與 `bge-m3`。下載完成後，在暫時 server terminal 按 `Ctrl+C`，並確認 11434 已釋放；後續由 `Procfile` 管理 Ollama。
-
-### 6. 每次啟動前先清除舊程序
-
-先在既有 Honcho terminal 按 `Ctrl+C`。若曾直接關閉 terminal、VS Code 或遇到 `pool-2`／`OSError(22)`，Honcho 的 uv／Python 孫程序可能仍在背景。
-
-在 repository 根目錄先預覽，再清理：
-
-```powershell
-Set-Location -LiteralPath $RepoRoot
-.\scripts\stop_windows_stack.ps1 -WhatIf
-.\scripts\stop_windows_stack.ps1
-```
-
-PowerShell execution policy 若阻擋腳本：
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop_windows_stack.ps1
-```
-
-腳本保留 PostgreSQL 與 VS Code。完成後預期 `5432=True`，`11434/4000/8001/8002/8003=False`。
-
-### 7. 選擇 workflow
-
-| Workflow | 用途 | 測試音檔 | 額外前置 |
-|---|---|---|---|
-| `stt_check_notify` | 判斷逐字稿是否提到台積電 | `samples/gen_tsmc_01.wav` | 無額外 seed |
-| `stt_exclusion_notify` | 判斷是否涉及保單除外責任 | `samples/gen_policy_01.wav` | 保單記憶應有 59 筆 |
-
-選擇一份 YAML，之後在 Terminal A、B 與 trigger 都使用相同值：
-
-```powershell
-$WorkflowDef = 'workflows/definitions/stt_check_notify.yaml'
-```
-
-或：
-
-```powershell
-$WorkflowDef = 'workflows/definitions/stt_exclusion_notify.yaml'
-```
-
-不設定 `WORKFLOW_DEF_PATH` 時，程式預設 `stt_check_notify.yaml`。為了避免誤會，本指南仍建議明確設定。
-
-### 8. Terminal A：啟動五個 services
-
-開啟新的 VS Code PowerShell，完整執行以下區塊。這個 terminal 必須保持開啟：
-
-```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-$WorkspaceRoot = Split-Path -Parent $RepoRoot
-$uvBin = Join-Path $env:USERPROFILE '.local\bin'
-$ollamaBin = Join-Path $env:LOCALAPPDATA 'Programs\Ollama'
-
-Set-Location -LiteralPath $RepoRoot
-$env:PYTHONUTF8 = '1'
-$env:PATH = "$uvBin;$ollamaBin;$env:PATH"
-$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
-$env:HF_HUB_CACHE = Join-Path $WorkspaceRoot '.hf-cache'
-$env:OLLAMA_MODELS = Join-Path $WorkspaceRoot '.ollama\models'
-$env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
-
-.\.venv\Scripts\honcho.exe start -f Procfile -e .env
-```
-
-若要跑除外責任場景，只替換這一行：
-
-```powershell
-$env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_exclusion_notify.yaml'
-```
-
-成功時會依序看到 `ollama`、`litellm`、`stt`、`notified`、`agents` 啟動，最後包含：
-
-```text
-Uvicorn running on http://127.0.0.1:4000
-Uvicorn running on http://127.0.0.1:8001
-Uvicorn running on http://127.0.0.1:8002
-Uvicorn running on http://127.0.0.1:8003
-```
-
-LiteLLM 的 cost map warning 與 Ollama 的舊 AMD driver warning 在目前實機屬非致命訊息；應以 listener、實際模型呼叫與後續錯誤為判斷依據。
-
-### 9. Terminal C：驗證 services、models 與 API key
-
-另開 PowerShell：
-
-```powershell
-$ports = 11434, 4000, 8001, 8002, 8003
-$ports | ForEach-Object {
-    [pscustomobject]@{
-        Port = $_
-        Listening = Test-NetConnection -ComputerName 127.0.0.1 -Port $_ -InformationLevel Quiet
-    }
-}
-```
-
-五個 port 都必須是 `True`。接著檢查 Ollama server 實際看到的模型：
-
-```powershell
-$ollamaModels = (Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags').models.name
-$ollamaModels
-
-if ($ollamaModels -notcontains 'qwen2.5:3b' -or
-    $ollamaModels -notcontains 'bge-m3:latest') {
-    throw 'Ollama 沒有讀到專案模型；請檢查 OLLAMA_MODELS 與啟動順序。'
-}
-```
-
-檢查 LiteLLM alias：
-
-```powershell
-(Invoke-RestMethod -Uri 'http://127.0.0.1:4000/v1/models').data.id
-```
-
-預期包含：`local-qwen`、`local-embed`、`breeze-asr`、`claude-haiku`、`gemini-cheap`、`gemini-strong`。Alias 出現只代表 config 已載入，不代表 provider 一定能呼叫。
-
-實際驗證 `gemini-cheap`：
-
-```powershell
-$geminiBody = @{
-    model = 'gemini-cheap'
-    messages = @(@{ role = 'user'; content = '只回覆 OK' })
-} | ConvertTo-Json -Depth 5
-
-$geminiResponse = Invoke-RestMethod `
-    -Uri 'http://127.0.0.1:4000/v1/chat/completions' `
-    -Method Post `
-    -ContentType 'application/json' `
-    -Body $geminiBody
-
-$geminiResponse.choices[0].message.content
-```
-
-驗證 embedding：
-
-```powershell
-$embedBody = @{
-    model = 'local-embed'
-    input = @('embedding smoke test')
-} | ConvertTo-Json -Depth 5
-
-$embedResponse = Invoke-RestMethod `
-    -Uri 'http://127.0.0.1:4000/v1/embeddings' `
-    -Method Post `
-    -ContentType 'application/json' `
-    -Body $embedBody
-
-$embedResponse.data[0].embedding.Count
-```
-
-embedding 維度應為 `1024`。
-
-### 10. 除外責任 workflow：確認保單記憶
-
-只有 `stt_exclusion_notify` 需要這一步。在 pgAdmin Query Tool 執行：
-
-```sql
-SELECT count(*) AS insurance_memory_rows
-FROM store
-WHERE prefix LIKE '_global.semantic.insurance_product.%';
-```
-
-目前資料來源 [kgi_ltc.yaml](data/insurance_product/kgi_ltc.yaml) 對應 59 筆。結果是 59 時直接跳過 seed；新的空資料庫或筆數不符時，先確認 5432、11434、4000 與 `local-embed`，再於 Terminal C 執行：
-
-```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-$WorkspaceRoot = Split-Path -Parent $RepoRoot
-Set-Location -LiteralPath $RepoRoot
-$env:PYTHONUTF8 = '1'
-$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
-.\.venv\Scripts\python.exe -m scripts.seed_insurance_memory
-```
-
-成功時最後顯示 `Seeded 59 item(s) total.`。腳本以固定 namespace／key upsert，可安全重跑；traceback 最後若只有 `KeyboardInterrupt`，代表程序被手動中止，不是 seed 自己回報資料錯誤。
-
-### 11. Terminal B：啟動 event-driven workers
-
-開啟新的 VS Code PowerShell，使用與 Terminal A **完全相同的 workflow YAML**：
-
-```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-$WorkspaceRoot = Split-Path -Parent $RepoRoot
-$uvBin = Join-Path $env:USERPROFILE '.local\bin'
-
-Set-Location -LiteralPath $RepoRoot
-$env:PYTHONUTF8 = '1'
-$env:PATH = "$uvBin;$env:PATH"
-$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
-$env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
-
-.\.venv\Scripts\honcho.exe start -f Procfile.workers -e .env
-```
-
-除外責任場景同樣只替換：
-
-```powershell
-$env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_exclusion_notify.yaml'
-```
-
-正常輸出應包含：
-
-```text
-[master] starting
-[worker:all] starting, steps=['check', 'notified', 'stt']
-[memory-writer] starting
-```
-
-跑 event bus／orchestrator／parity smoke tests 前必須關閉這批 workers，避免相同 consumer group 搶走測試事件。
-
-### 12. Terminal C：trigger workflow
-
-PowerShell 5.1 呼叫原生 `.exe` 時會移除 JSON 內層雙引號，因此這裡使用已在目前 VS Code 環境驗證的 `\"` 寫法。
-
-台積電場景：
-
-```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-Set-Location -LiteralPath $RepoRoot
-
-.\.venv\Scripts\python.exe -m orchestrator.trigger `
-    --workflow-def workflows/definitions/stt_check_notify.yaml `
-    --payload '{\"audio_ref\":\"samples/gen_tsmc_01.wav\"}'
-```
-
-除外責任場景：
-
-```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-Set-Location -LiteralPath $RepoRoot
-
-.\.venv\Scripts\python.exe -m orchestrator.trigger `
-    --workflow-def workflows/definitions/stt_exclusion_notify.yaml `
-    --payload '{\"audio_ref\":\"samples/gen_policy_01.wav\"}'
-```
-
-反引號必須是每行最後一個字元，後面不能有空白。PowerShell 7 可使用未跳脫的一般 JSON；完整指令如下：
-
-```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-Set-Location -LiteralPath $RepoRoot
-
-.\.venv\Scripts\python.exe -m orchestrator.trigger `
-    --workflow-def workflows/definitions/stt_check_notify.yaml `
-    --payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'
-```
-
-trigger 成功只代表命令已寫入 event bus，會印出：
-
-```text
-started run thread_id=<新的 UUID> workflow=<workflow 名稱>
-```
-
-請保存 `thread_id`。舊 run 已是 `needs_review`／`failed`／`completed` 時不能當成新 run 重用；修正設定後必須重新 trigger。
-
-### 13. 查詢 workflow 狀態與 DB
-
-Repository 內建查詢工具：
-
-```powershell
-$ThreadId = 'REPLACE_WITH_THREAD_ID'
-.\.venv\Scripts\python.exe -m persistence.history $ThreadId
-```
-
-`REPLACE_WITH_THREAD_ID` 是佔位值，必須換成 trigger 印出的 UUID。
-
-在 pgAdmin Query Tool 查最近的 runs：
-
-```sql
-SELECT thread_id, workflow_name, current_step, status,
-       step_deadline_at, created_at, updated_at
-FROM orchestrator_runs
-ORDER BY updated_at DESC
-LIMIT 10;
-```
-
-查指定 run：
-
-```sql
-SELECT thread_id, workflow_name, current_step, status,
-       state_payload ->> 'review_reason' AS review_reason,
-       step_deadline_at, updated_at
-FROM orchestrator_runs
-WHERE thread_id = '<thread_id>';
-```
-
-查每個 Agent、LLM、MCP tool 與 memory audit log：
-
-```sql
-SELECT created_at, node, kind, name, response_model,
-       is_error, denied, latency_ms
-FROM call_log
-WHERE thread_id = '<thread_id>'
-ORDER BY created_at;
-```
-
-查事件是否被正確 workflow 的 consumer group 接走：
-
-```sql
-SELECT e.topic, e.event_type, e.created_at,
-       d.consumer_group, d.status, d.attempts,
-       d.last_error, d.done_at
-FROM event_log AS e
-LEFT JOIN event_dispatch AS d
-       ON d.event_log_id = e.id
-WHERE e.thread_id = '<thread_id>'
-ORDER BY e.id, d.id;
-```
-
-常見狀態：
-
-| `orchestrator_runs.status` | 意義 |
-|---|---|
-| `running` | 尚在執行；搭配 `current_step` 與 `step_deadline_at` 判斷是否正常 |
-| `completed` | 所有 step 已完成 |
-| `needs_review` | 已停止自動推進，需要人工查看 `review_reason`／logs |
-| `failed` | 已失敗，不會自動變回 running |
-
-若某個 command event 存在但沒有 `event_dispatch`，通常表示 workers 訂閱了另一份 workflow；檢查 Terminal A、B 與 trigger 的 YAML 是否完全一致。
-
-### 14. 在哪裡看即時 log
-
-| 問題 | 先看哪裡 |
-|---|---|
-| 11434／模型目錄 | Terminal A 的 `ollama` |
-| Gemini、alias、provider key | Terminal A 的 `litellm` |
-| Breeze 模型／CUDA／轉錄 | Terminal A 的 `stt` |
-| 通知 placeholder | Terminal A 的 `notified` |
-| Agent／MCP 子程序 | Terminal A 的 `agents` |
-| run 推進、deadline | Terminal B 的 `master` |
-| step 執行 | Terminal B 的 `worker-all` |
-| 記憶寫入 | Terminal B 的 `memory-writer` |
-| 歷史結果 | `persistence.history`、`orchestrator_runs`、`call_log` |
-
-成功的單次 event-driven run 應同時符合：trigger 有新 `thread_id`、workers 依序處理 `stt -> check -> notified`、run 最終為 `completed`、`call_log` 有相符的 model/tool/memory 紀錄。
-
-### 15. 切換 workflow 的正確流程
-
-1. 在 Terminal A、B 分別按 `Ctrl+C`。
-2. 檢查五個 application ports；有殘留就執行 `stop_windows_stack.ps1`。
-3. 確認 `.env` 沒有用 `WORKFLOW_DEF_PATH` 覆蓋 terminal 設定。
-4. Terminal A 設定新 YAML後啟動 `Procfile`。
-5. 驗證五個 ports 與 models。
-6. Terminal B 設定同一份 YAML後啟動 `Procfile.workers`。
-7. trigger 的 `--workflow-def` 使用同一份 YAML。
-8. 取得新的 `thread_id`。
-
-只改 trigger 不會熱切換已執行的 Runtime／workers。這正是 command event 存在但沒有正確 dispatch、最後在 `stt` deadline 進入 `needs_review` 的常見原因。
-
-### 16. 關閉全部專案程序
-
-先在 Terminal B、A 分別按 `Ctrl+C`，再檢查：
-
-```powershell
-11434, 4000, 8001, 8002, 8003 | ForEach-Object {
-    $listener = Get-NetTCPConnection -State Listen -LocalPort $_ -ErrorAction SilentlyContinue
-    [pscustomobject]@{
-        Port = $_
-        Listening = $null -ne $listener
-        PID = if ($listener) { $listener.OwningProcess } else { $null }
-    }
-}
-```
-
-若仍有 listener：
-
-```powershell
-Set-Location -LiteralPath $RepoRoot
-.\scripts\stop_windows_stack.ps1 -WhatIf
-.\scripts\stop_windows_stack.ps1
-```
-
-不要用未限制 repository 範圍的批次 `Stop-Process -Force`。清理腳本不會停止 PostgreSQL 或 VS Code。
-
-### 17. Windows 常見錯誤
-
-| 錯誤／現象 | 原因 | 修正 |
-|---|---|---|
-| `UnicodeDecodeError: cp950` | 新 terminal 沒有先設定 `PYTHONUTF8` | 在同一 terminal 設 `$env:PYTHONUTF8='1'` 後再啟動 Honcho |
-| `JSONDecodeError` | PowerShell 5.1 移除 JSON 內層引號 | 使用本指南的 `'{\"audio_ref\":...}'` 寫法 |
-| 11434 已占用 | Ollama Desktop 已在背景執行 | 從系統列退出，確認 port 釋放，再讓 Procfile 啟動 |
-| Alias 有但模型找不到 | Ollama server 讀到另一個模型目錄 | 在 server 啟動前設定 `OLLAMA_MODELS`，並查 `/api/tags` |
-| `McpError: Connection closed` | MCP stdio 子程序的 uv cache／環境錯誤 | 設定 D 槽 `UV_CACHE_DIR`，確認使用含 Windows 修正的版本 |
-| trigger 停在 `stt` 且沒有 call log | Runtime／workers 與 trigger 使用不同 workflow | 關閉兩批 Honcho，以相同 YAML 重啟並建立新 run |
-| `pool-2`／`OSError(22)` | Honcho 孫程序、重複 workers 或 connection pools 殘留 | 使用範圍限定的關閉腳本清理後只啟動一組 |
-| seed import 最後是 `KeyboardInterrupt` | 使用者在 import 完成前中止 | 先查 DB；已有 59 筆就跳過，空 DB 才重新執行 |
-
-### 18. 靜態檢查
-
-不啟動服務也能執行：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\static_compat_check.py
-.\.venv\Scripts\python.exe -m services.stt.temp_audio_smoke_test
-```
-
-需要 event bus 的 smoke／parity tests 前，務必先關閉 `Procfile.workers`。完整測試分層見 [docs/testing.md](docs/testing.md)。
-
-## 原作者 macOS / Bash 安裝參考（保留原文）
-
-### macOS / Bash / Claude Code（原作者流程，尚未由目前維護者重驗）
-
-以下內容保留原作者的 macOS 操作脈絡，供上游差異比對；它不是目前 Windows 環境的直接操作指令。
-
-#### 1. 專案本身
+### 1. 專案本身
 
 需要 Python 3.11+ 與 [uv](https://docs.astral.sh/uv/)。
 
@@ -639,7 +148,7 @@ cd multi-agent-platform
 uv sync                      # 建 .venv 並裝好所有依賴（含 honcho、litellm）
 ```
 
-#### 2. Postgres + pgvector
+### 2. Postgres + pgvector
 
 checkpointer、呼叫紀錄、event bus、run state、長期記憶全都存這裡。
 
@@ -660,7 +169,7 @@ psql agent_architecture -c "\dx"
 >
 > 資料表**不用**手動建，各模組啟動時會自己 `CREATE TABLE IF NOT EXISTS`；只有 extension 這一步是手動的。
 
-#### 3. 環境變數
+### 3. 環境變數
 
 ```bash
 cp .env.example .env
@@ -668,14 +177,14 @@ cp .env.example .env
 
 打開 `.env` 填：
 
-- `ANTHROPIC_API_KEY`——目前只有仍宣告 `claude-haiku` 的 workflow / 工具才需要。預設的 `stt_check_notify` 不需要；`stt_exclusion_notify` 的 `check`／`notified` 仍需要。
-- `GEMINI_API_KEY`——目前 `stt_check_notify` 的三個 step 與 `stt_exclusion_notify` 的 `stt` 都宣告 `gemini-cheap`，執行任一 workflow 都需要；[scripts/distill_procedural.py](scripts/distill_procedural.py) 的知識蒸餾與 [evals/run_eval.py](evals/run_eval.py) 的 Gemini 對照診斷也可能需要。
+- `ANTHROPIC_API_KEY`——`claude-haiku` 用；台積電場景的 `stt`／`notified`，以及除外責任場景的 `check`／`notified` 都需要，**目前兩個示範場景都不能留空**。
+- `GEMINI_API_KEY`——除外責任場景的 `stt` 宣告為 `gemini-cheap`，因此跑 `stt_exclusion_notify` 時必填；[scripts/distill_procedural.py](scripts/distill_procedural.py) 的知識蒸餾與 [evals/run_eval.py](evals/run_eval.py) 的 Gemini 對照診斷也需要。只跑 `stt_check_notify` 且不執行這些工具時可以留空。
 
 `PERSISTENCE_DATABASE_URL` 預設值對應上一步建的 DB，本機 Postgres 有設帳密才要改。
 
 每個模組都會自己 `load_dotenv()`，所以不用手動 export。
 
-#### 4. Ollama 與本機模型
+### 4. Ollama 與本機模型
 
 ```bash
 brew install ollama
@@ -694,26 +203,18 @@ ollama list
 
 > 用 `brew services` 讓 Ollama 常駐的話，要把 [Procfile](Procfile) 裡 `ollama:` 那行註解掉，不然下一步 `honcho start` 會撞 port 失敗。
 
-#### 5. Breeze-ASR-25（自動）
+### 5. Breeze-ASR-25（自動）
 
-第一次跑 `stt` 時會自動從 Hugging Face 下載（需要網路，之後快取在本機），不用預先準備。第一次呼叫會因此慢很多。Windows 的已驗證 CUDA、D 槽快取與免 FFmpeg 設定請另見 [docs/windows-setup.md](docs/windows-setup.md)。
+第一次跑 `stt` 時會自動從 HuggingFace 下載（需要網路，之後快取在本機），不用預先準備。第一次呼叫會因此慢很多。
 
 ---
 
-## 原作者 macOS / Bash 執行參考（尚未於本機重驗）
+## 執行
 
-以下段落保留原作者的執行方式與功能說明，作為上游設計參考。Windows 使用者不要直接執行其中的 `brew`、`export`、`lsof` 或 `pkill` 指令。
+### 步驟 0：啟動常駐服務（兩種模式共用）
 
-### 步驟 0：啟動常駐服務（僅限原作者 macOS / Bash 流程）
+常駐服務用 [Procfile](Procfile) + [honcho](https://github.com/nickstenning/honcho) 一個指令全部啟動：
 
-> [!WARNING]
-> 以下 `bash` 指令中的「兩種模式」是指原作者的同步／事件驅動模式，不是指 Windows 與 macOS 共用。Windows 使用者請回到前面的 [Windows / PowerShell 執行](#windows--powershell-執行目前主線)，不要在 PowerShell 直接執行 `uv run honcho start`。
-
-原作者在 macOS 上使用 [Procfile](Procfile) + [honcho](https://github.com/nickstenning/honcho) 一個指令啟動常駐服務：
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-$env:PYTHONUTF8 = '1'
-$env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_policy_notify.yaml'
-.\.venv\Scripts\honcho.exe start -f Procfile.workers -e .env
 ```bash
 uv run honcho start
 ```
@@ -749,9 +250,6 @@ curl -s http://localhost:4000/v1/models | python3 -m json.tool | grep '"id"'
 > - 同步模式其實用不到 8003 這個 agent runtime，但一起起來也無妨。
 
 #### 切換示範 workflow
-
-> [!NOTE]
-> 本小節仍是原作者的 macOS / Bash 寫法。Windows 必須使用前方 PowerShell 區段的 `$env:WORKFLOW_DEF_PATH = '...'` 與 `\.venv\Scripts\honcho.exe` 指令。
 
 `check-agent`/`notified-agent`（上面這批常駐服務）以及事件驅動模式的 `master`/`worker`（下面 [Procfile.workers](Procfile.workers)）在**啟動時**讀 `WORKFLOW_DEF_PATH` 這個環境變數，決定要照哪一份 workflow 定義檔驗證/執行——不填預設是 `workflows/definitions/stt_check_notify.yaml`（台積電場景）。要跑除外責任場景，啟動**這兩批 process 時都要帶同一個值**：
 
@@ -821,9 +319,6 @@ uv run python -m orchestrator.trigger \
 
 **① 先把保單條款灌進長期記憶**（只需做一次，做過就跳過）
 
-> [!WARNING]
-> 以下仍是 macOS / Bash 指令。Windows 請使用前方「Windows / PowerShell：除外責任場景的保單記憶」段落，並先查資料庫；目前 Windows 實機已經有完整 59 筆，不需要重跑。
-
 ```bash
 uv run python -m scripts.seed_insurance_memory
 ```
@@ -846,17 +341,9 @@ uv run python -m orchestrator.trigger \
 
 ---
 
-## Demo UI
+## Demo UI（用瀏覽器組 workflow / 審核長期記憶）
 
 不寫指令、用瀏覽器操作的替代介面：組裝/測試 agent、瀏覽 workflow 設定、觸發執行、審核 `memory-writer` 寫入的 `pending` 記憶（approve/reject）。
-
-Windows / PowerShell（尚未實機驗證）：
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn demo.api:app --port 8010
-```
-
-macOS / Bash（原作者流程）：
 
 ```bash
 uv run uvicorn demo.api:app --port 8010
@@ -868,15 +355,6 @@ uv run uvicorn demo.api:app --port 8010
 
 ## 觀察執行結果
 
-Windows / PowerShell：
-
-```powershell
-$ThreadId = 'REPLACE_WITH_THREAD_ID'
-.\.venv\Scripts\python.exe -m persistence.history $ThreadId
-```
-
-macOS / Bash：
-
 ```bash
 uv run python -m persistence.history <thread_id>
 ```
@@ -887,64 +365,22 @@ uv run python -m persistence.history <thread_id>
 
 ## 驗證
 
-專案主要使用可直接執行的 smoke test，而不是 pytest。
-
-Windows / PowerShell：
-
-```powershell
-.\.venv\Scripts\python.exe -m event_bus.smoke_test
-.\.venv\Scripts\python.exe -m orchestrator.smoke_test
-.\.venv\Scripts\python.exe -m workflows.parity_check
-.\.venv\Scripts\python.exe -m persistence.memory_smoke_test
-```
-
-macOS / Bash：
+沒有 pytest，全部是手動跑的 smoke test：
 
 ```bash
-uv run python -m event_bus.smoke_test
-uv run python -m orchestrator.smoke_test
-uv run python -m workflows.parity_check
-uv run python -m persistence.memory_smoke_test
+uv run python -m event_bus.smoke_test           # event bus 本身
+uv run python -m orchestrator.smoke_test        # 編排層
+uv run python -m workflows.parity_check         # 兩種模式一致性
+uv run python -m persistence.memory_smoke_test  # 長期記憶
 ```
 
 ⚠️ 跑前先關掉 `honcho -f Procfile.workers start`（consumer group 撞名，會搶走測試的命令）。各支的前置條件、記憶蒸餾 pipeline（P0-P5）手動試跑步驟，見 [docs/testing.md](docs/testing.md)。
-
-commit `39d6449` 的 CI 曾因過時的 notified gather scenario 失敗。本機已把該 scenario 改成真正進入 `should_notify=true` 的並行路徑，並通過 gather、notify-agent、五個 dependency-free MCP smoke tests 與靜態檢查；目前未用 GitHub CLI 重查最新遠端 Actions。詳見 [docs/current-windows-status.md](docs/current-windows-status.md)。
 
 ---
 
 ## 關閉
 
-兩個 Honcho terminal 各按一次 `Ctrl+C`，各自的 process 會連帶關閉；trigger 是一次性指令，demo UI 則在自己的 terminal 按 `Ctrl+C`。
-
-Windows / PowerShell 關閉後確認 port；正常結果是五個 application port 都顯示 `False`：
-
-```powershell
-11434, 4000, 8001, 8002, 8003 | ForEach-Object {
-    $listener = Get-NetTCPConnection -State Listen -LocalPort $_ -ErrorAction SilentlyContinue
-    [pscustomobject]@{
-        Port = $_
-        Listening = $null -ne $listener
-        PID = if ($listener) { $listener.OwningProcess } else { $null }
-    }
-}
-```
-
-Windows 上的 Honcho 可能已退出，但它啟動的 `uv`、Python、MCP 或 worker 孫程序仍然存活。實機曾因此同時留下多組 Master/worker/LiteLLM、33 條 idle PostgreSQL 連線，下一次 run 在 `stt` 出現 `error connecting in 'pool-2'` 與 `OSError(22, 'Invalid argument')`。若上表仍有 `True`、重啟時撞 port，或 workers terminal 已關閉但程序仍在，於 repository 根目錄先預覽再清理：
-
-```powershell
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-.\scripts\stop_windows_stack.ps1 -WhatIf
-.\scripts\stop_windows_stack.ps1
-```
-
-`-WhatIf` 只列出範圍，不會停止程序；第二個指令才會執行。腳本只比對本 repository 的 Honcho、LiteLLM、STT、notified、Agent Runtime、event-driven workers、其子程序，以及實際占用 11434 的 `ollama serve`；不會停止 PostgreSQL 或 VS Code。完成後預期 `5432=True`，其餘五個 port 都是 `False`。若 PowerShell execution policy 阻擋本機腳本，可只對這一次執行繞過：
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop_windows_stack.ps1
-```
-
-macOS / Bash 如果 `Ctrl+C` 後還有殘留 process，可使用原作者的檢查與清理方式：
+兩個 honcho terminal 各按一次 `Ctrl+C`，各自的 process 都會連帶關掉（trigger 是一次性執行，跑完自動結束；demo UI 是另開的 terminal，`Ctrl+C` 單獨關）。如果不小心留下殘留 process：
 
 ```bash
 pkill -f "ollama serve"
@@ -955,9 +391,15 @@ pkill -f "uvicorn demo.api"
 pkill -f "workflows.event_driven_pipeline"
 ```
 
-`pkill` 會終止符合樣式的 process，執行前應先用 `pgrep -af '<pattern>'` 確認目標。
-
 ---
+
+## 目前功能的延伸入口
+
+- Demo UI 與後端整合狀態：[docs/ui-backend-integration-plan.md](docs/ui-backend-integration-plan.md)
+- 執行結果、資料表與 call log：[docs/observability.md](docs/observability.md)
+- 分層 smoke／integration tests：[docs/testing.md](docs/testing.md)
+- Windows 完整停止程序：[docs/windows-setup.md](docs/windows-setup.md#16-關閉)
+- 長期記憶與知識蒸餾：[docs/knowledge-distillation-windows.md](docs/knowledge-distillation-windows.md)
 
 ## 專案結構
 
@@ -990,7 +432,8 @@ docs/                    設計文件（見下）
 ## 進一步閱讀
 
 - [AGENTS.md](AGENTS.md) — 平台目標、Codex/貢獻規範，以及「什麼算平台能力、什麼算場景邏輯」的判準
-- [CLAUDE.md](CLAUDE.md) — 原作者的平台目標與 Claude Code 專案脈絡；保留給 macOS / Claude Code 工作流程
-- [docs/current-windows-status.md](docs/current-windows-status.md) — 目前 Windows 實機狀態、已驗證範圍、阻擋項目與已知 CI 失敗
+- [AGENTS.md](AGENTS.md) — 現行專案目標、來源優先級與協作規範；[CLAUDE.md](CLAUDE.md) 保留原作者的 Claude Code 專案脈絡
+- [docs/current-windows-status.md](docs/current-windows-status.md) — 目前 Windows 實機狀態、已驗證範圍、服務／模型與 CI 狀態
+- [docs/knowledge-distillation-windows.md](docs/knowledge-distillation-windows.md) — Windows episodic 審核、procedural 蒸餾、評測、核准與 DB 查詢主線
 - [docs/README.md](docs/README.md) — 每份設計文件在講什麼、什麼時候該看，一份索引
 - [TODO.md](TODO.md) — 已知缺口與尚未做的決策；[fixed.md](fixed.md) — 已經解決的

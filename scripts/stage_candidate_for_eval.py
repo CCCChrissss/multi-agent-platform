@@ -29,10 +29,16 @@ accumulating pile from past runs.
 calls it directly instead of shelling out, so one process can stage +
 compare + review without a subprocess round trip.
 
-Run standalone with:
-    uv run python -m scripts.stage_candidate_for_eval --key pending-<uuid> --scope stt_exclusion_notify/check
+Run standalone from the repository root:
+    Windows PowerShell:
+        .\.venv\Scripts\python.exe -m scripts.stage_candidate_for_eval --key pending-<uuid> --scope stt_exclusion_notify/check
+    macOS / Bash:
+        uv run python -m scripts.stage_candidate_for_eval --key pending-<uuid> --scope stt_exclusion_notify/check
 
-Requires the local stack (`uv run honcho start`).
+Requires PostgreSQL, LiteLLM on port 4000, and `local-embed` (LiteLLM ->
+Ollama/bge-m3) for the staged candidate write. It does not require STT,
+notified, Agent Runtime, or event-driven workers. This command clears and
+rewrites only the disposable `eval` tenant for the selected scope.
 """
 
 from __future__ import annotations

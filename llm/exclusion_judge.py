@@ -19,10 +19,10 @@ rationale, summarized here:
    collected from tool *results*, never from what the model merely claims).
    A citation that doesn't check out gets one retry turn with the mismatch
    spelled out; still wrong -> AgentLoopIncomplete.
-3. This step's declared `model` (workflows/definitions/stt_exclusion_notify.yaml,
-   docs/generic-agent-runtime-plan.md P5) is claude-haiku as of 2026-08-17
-   (explicit user request to stop using Gemini entirely, gateway/config.yaml's
-   claude-haiku entry) -- this loop needs several consecutive tool-calling
+3. This step's current declared `model` lives in workflows/definitions/
+   stt_exclusion_notify.yaml (docs/generic-agent-runtime-plan.md P5), not a
+   module constant. It is `gemini-cheap` as of the 2026-08-31 Windows-local
+   workflow update -- this loop needs several consecutive tool-calling
    turns plus mid-task direction changes (backtracking to a sibling branch),
    which is a heavier ask than llm/tsmc_judge.py's single-shot
    classification. Worth revisiting once this scenario is stable, per the
@@ -30,17 +30,17 @@ rationale, summarized here:
    small/cheap model can sustain.
 
    History: was gemini-cheap until 2026-08-11 (TODO.md's exclusion-judge-model-choice),
-   then gemini-strong -- repeated sampling on evals/check_cases.yaml's
+   then gemini-strong, then claude-haiku on 2026-08-17, before the current
+   Windows workflow moved the declared step back to gemini-cheap. Repeated
+   sampling on evals/check_cases.yaml's
    drunk_driving_bike (the deliberately-tricky multi-hop case) measured 0/5
    on gemini-cheap vs 15/15 on gemini-strong, and gemini-cheap separately
    showed degraded format/reasoning discipline the moment *any* episodic
-   few-shot content entered the prompt (TODO.md's
-   exclusion-judge-episodic-degradation-risk). **The move to claude-haiku
-   hasn't been re-verified against that same evals/check_cases.yaml
-   comparison yet** -- run `evals/run_eval.py --repeats 3` before trusting
-   this model choice for this step; the gemini-strong-vs-gemini-cheap gap
-   above is evidence this judge is genuinely sensitive to model choice, not
-   a generic "any model works" task.
+   few-shot content entered the prompt (that injection path was later
+   removed by P5). Run `evals/run_eval.py --repeats 3` before trusting a
+   model change for this step; the gemini-strong-vs-gemini-cheap gap is
+   evidence this judge is genuinely sensitive to model choice, not a
+   generic "any model works" task.
 """
 
 from __future__ import annotations

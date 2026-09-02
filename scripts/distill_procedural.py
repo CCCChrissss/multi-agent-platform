@@ -4,7 +4,7 @@ model doesn't propose duplicates -- and asks an LLM to generalize them into
 candidate procedural rules. Every candidate is written with
 `status="pending"`, invisible to recall()/browse() (persistence/memory.py's
 §5 P0 gate) until a human reviewer promotes it -- the M5 quality gate (P3,
-not built yet). Writing here can never affect a live agent, which is
+implemented by scripts/review_memory.py). Writing here can never affect a live agent, which is
 exactly why P0 (the status gate) had to land before this script could be
 written at all.
 
@@ -15,10 +15,16 @@ inject_procedural() (persistence/memory_prompt.py) reads for *active*
 procedural rules. evidence/rationale are for the human reviewer, not for
 injection into any agent's prompt.
 
-Run with:
-    uv run python -m scripts.distill_procedural --scope stt_exclusion_notify/check [--limit 20]
+Run from the repository root:
+    Windows PowerShell:
+        .\.venv\Scripts\python.exe -m scripts.distill_procedural --scope stt_exclusion_notify/check --limit 20
+    macOS / Bash:
+        uv run python -m scripts.distill_procedural --scope stt_exclusion_notify/check --limit 20
 
-Requires the local stack (`uv run honcho start`).
+Requires PostgreSQL, LiteLLM on port 4000, the configured `gemini-cheap`
+provider, and `local-embed` (LiteLLM -> Ollama/bge-m3). It does not require
+STT, notified, Agent Runtime, or event-driven workers. See
+docs/knowledge-distillation-windows.md for the review order and safety gate.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 # 記憶蒸餾審核 UI：現況與驗收契約
 
 > [!NOTE]
-> 本文件保留功能設計與既有驗收契約；Demo UI 尚未在目前 Windows / PowerShell 環境重新執行。現行實機狀態見 [current-windows-status.md](current-windows-status.md)。
+> 本文件保留功能設計與既有驗收契約；Demo UI 尚未在目前 Windows / PowerShell 環境重新執行。CLI 操作主線見 [knowledge-distillation-windows.md](knowledge-distillation-windows.md)，現行實機狀態見 [current-windows-status.md](current-windows-status.md)。
 
 本文件描述 [demo/index.html](../demo/index.html) 與 [demo/api.py](../demo/api.py) 已落地的
 memory review UI。核心記憶語意仍以 [knowledge-distillation-plan.md](knowledge-distillation-plan.md)
@@ -68,10 +68,17 @@ handler 為準。
 
 ## 4. 驗證
 
-需要先安裝專案相依套件並啟動 PostgreSQL：
+Windows / PowerShell 需要先安裝專案相依套件並確認 PostgreSQL 可連線。在 repository 根目錄執行：
 
 ```powershell
-uv run python -m demo.distill_api_smoke_test
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+Set-Location -LiteralPath $RepoRoot
+
+$env:PYTHONUTF8 = '1'
+.\.venv\Scripts\python.exe -m demo.distill_api_smoke_test
 ```
 
 這支 smoke test 會在隔離 scope 寫入假 pending procedural、經 API handler 核准、確認

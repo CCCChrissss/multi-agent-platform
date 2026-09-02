@@ -1,7 +1,7 @@
 # 新示範場景：保單除外責任檢核（含記憶的漸進式揭露）
 
 > [!NOTE]
-> 這是除外責任場景的上游設計與落地紀錄。該 workflow 目前仍宣告 `gemini-cheap` / `claude-haiku`，尚未在無雲端 API key 的 Windows 環境完整執行；目前狀態見 [current-windows-status.md](current-windows-status.md)。
+> 這是除外責任場景的歷史設計與落地紀錄，不是目前操作手冊。實際 workflow YAML 的三個 step 目前都宣告 `gemini-cheap`，並曾在具備有效 Gemini key 的 Windows 環境完成一次 event-driven 執行；2026-09-01 移除所有雲端 API key 後，目前不能重新執行。model 與驗證範圍見 [current-windows-status.md](current-windows-status.md)，Windows 操作方式見 [windows-setup.md](windows-setup.md)。
 
 ## 0. 這份文件在回答什麼
 

@@ -1,7 +1,7 @@
 # 除外責任「行為人區分」demo 設計與跑法
 
 > [!NOTE]
-> 這是原作者 demo 設計與歷史跑法。因 `stt_exclusion_notify` 目前仍依賴 Anthropic / Gemini，本文件尚未在目前 Windows 無雲端 key 的環境重新完整執行；現行狀態見 [current-windows-status.md](current-windows-status.md)。
+> 這是原作者 demo 設計與 macOS / Bash 歷史跑法。Windows 已實際進行 actor-distinction demo 到 candidate staging／procedural review，並確認 `eval` active 與 `default` pending 是不同 tenant 的預期狀態；尚未確認 production approve 與完整回歸結果。2026-09-01 已移除所有雲端 API key，目前無法繼續需要 Gemini 的步驟。Windows 通用流程見 [knowledge-distillation-windows.md](knowledge-distillation-windows.md)，日期化狀態見 [current-windows-status.md](current-windows-status.md)。
 
 ## 0. 這份文件在做什麼
 
@@ -15,7 +15,7 @@
 
 ## 1. 鎖定的盲點
 
-`default/procedural/stt_exclusion_notify/check` 目前唯一 active 的規則（`pending-e9b8205f`，2026-08-11 核准）：
+原作者 2026-08-11 跑這個 demo 時，`default/procedural/stt_exclusion_notify/check` 唯一 active 的規則是 `pending-e9b8205f`；2026-08-31 Windows 開始重跑 demo 前沒有 procedural，但後續 review 已產生 candidate 資料，所以下列內容只代表歷史起點，不是目前資料庫聲明：
 
 > 判斷除外責任時，必須明確區分保險給付項目（如長期照顧保險金 vs. 意外二至三級失能保險金），因為不同項目的除外規定可能完全不同。
 
@@ -58,7 +58,7 @@ expected `involves_exclusion: false`，matched `第二十九條`。
 
 ### 3.1 production 模型測不出東西，demo 必須用 gemini-cheap
 
-用 `seed-policyholder_assault_disability23` 的逐字稿測過：production 的 `gemini-strong` 對這個案例 5/5 正確——模型本身讀條文夠仔細，這個盲點對它不構成誤判，是跟 `evals/check_cases.yaml` 的 `seed-drunk_ride_ltc` 同一種 ceiling effect。`gemini-cheap` 在無記憶 baseline 下 0/5 全錯，加上現有 `pending-e9b8205f` 規則後仍是 0/5（規則答非所問）。手寫一條「行為人區分」規則診斷性地疊上去，5/5 全對——證明記憶機制本身有效，缺的只是對的規則內容，不是模型能力上限。**結論不變：demo 要用 `gemini-cheap`，不能用 production 的 `gemini-strong`。** `scripts/seed_actor_distinction_demo.py`（§4）已經內建這個 model override。
+用 `seed-policyholder_assault_disability23` 的逐字稿做過歷史比較：`gemini-strong` 對這個案例 5/5 正確——模型本身讀條文夠仔細，這個盲點對它不構成誤判，是跟 `evals/check_cases.yaml` 的 `seed-drunk_ride_ltc` 同一種 ceiling effect。`gemini-cheap` 在無記憶 baseline 下 0/5 全錯，加上當時的 `pending-e9b8205f` 規則後仍是 0/5（規則答非所問）。手寫一條「行為人區分」規則診斷性地疊上去，5/5 全對——證明記憶機制本身有效，缺的只是對的規則內容，不是模型能力上限。**這個 demo 必須明確指定 `gemini-cheap`，才能重現當時要展示的盲點。** `scripts/seed_actor_distinction_demo.py`（§4）已經內建這個 model override；目前 workflow 本身也使用 `gemini-cheap`，但 demo 仍保留明確 override 以避免設定漂移。
 
 ### 3.2（原 §3.1，**已過期，因 P5 結構性移除**）episodic few-shot 洩漏
 
@@ -81,7 +81,10 @@ expected `involves_exclusion: false`，matched `第二十九條`。
 
 ## 4. Demo 跑法（重新設計版，每一步都是你自己在終端機跑的指令）
 
-以下指令都假設 `uv run honcho start` 已經在跑。凡是需要互動輸入的步驟（3、5）會列出建議怎麼回答，但決定權在你。
+> [!IMPORTANT]
+> 以下是原作者的 macOS / Bash 指令，保留原有內容。Windows 不要直接貼到 PowerShell；先依 [knowledge-distillation-windows.md](knowledge-distillation-windows.md) 設定 repository、Python 與必要服務，再把每個 `uv run python` 對應成 `.\.venv\Scripts\python.exe`。本 demo 會寫入與刪除記憶資料，正式執行前仍需另行確認。
+
+以下原作者指令都假設 `uv run honcho start` 已經在跑。凡是需要互動輸入的步驟（3、5）會列出建議怎麼回答，但決定權在你。
 
 **步驟 0：確認乾淨起點**（如果不是第一次跑，先重置）
 
@@ -118,7 +121,7 @@ uv run python -m scripts.review_episodic --scope stt_exclusion_notify/check
 uv run python -m scripts.distill_procedural --scope stt_exclusion_notify/check
 ```
 
-蒸餾器會讀這個 scope 下**所有** active episodic（不只這兩筆，還有 `seed_exclusion_episodic_examples.py` 的 6 筆基礎語料）跟現有 procedural（`pending-e9b8205f`），嘗試歸納出新規則。記下它印出的 `pending-<uuid>` key。
+蒸餾器會讀這個 scope 下**所有當下存在的** active episodic 與 active procedural，嘗試歸納出新規則。原作者 demo 當時另有 `seed_exclusion_episodic_examples.py` 的 6 筆基礎語料與 `pending-e9b8205f`；Windows 重跑時不能假設這些資料仍存在，必須先查 DB。記下指令實際印出的 `pending-<uuid>` key。
 
 **步驟 5：人審核候選規則——確認規則文字有講「怎麼判」，不是只講「要查什麼」**
 
@@ -144,7 +147,7 @@ approve 之後終端機會印出兩筆 `split: regression` 的 YAML 建議格式
 uv run python -m evals.run_eval --repeats 5 --model gemini-cheap
 ```
 
-`--model gemini-cheap` 是必要的，不是可省的預設值——production 的 `gemini-strong`（`evals/run_eval.py` 不加 `--model` 時的預設）在這個盲點上有 ceiling effect（§3.1），看不出「有沒有規則」的差異。如果步驟 6 已經把 holdout 貼進 `check_cases.yaml`，這支指令會直接把它跑進去、印出通過率；沒貼的話，把 §2.1 的逐字稿暫時加進 `evals/check_cases.yaml`（`split: holdout`）再跑，或參考 `scripts/review_memory.py::_load_evidence_cases`/`_run_case` 的寫法手動組一個一次性腳本呼叫 `judge_exclusion(..., tenant="default")` 五次數 pass rate。預期：新規則核准前這句話會誤判 `true`，核准後穩定判對 `false`。
+`--model gemini-cheap` 應明確保留，確保重跑仍使用這個 demo 要測的弱模型；若未指定，`evals/run_eval.py` 會跟隨目前 workflow YAML，而該設定未來可能改變。歷史比較中的 `gemini-strong` 在這個盲點上有 ceiling effect（§3.1），看不出「有沒有規則」的差異。如果步驟 6 已經把 holdout 貼進 `check_cases.yaml`，這支指令會直接把它跑進去、印出通過率；沒貼的話，把 §2.1 的逐字稿暫時加進 `evals/check_cases.yaml`（`split: holdout`）再跑，或參考 `scripts/review_memory.py::_load_evidence_cases`/`_run_case` 的寫法手動組一個一次性腳本呼叫 `judge_exclusion(..., tenant="default")` 五次數 pass rate。歷史預期是新規則核准前誤判 `true`、核准後判對 `false`；目前 Windows 尚未重跑，不能直接沿用這個結果。
 
 ## 5. Demo 跑完後如何重置 DB
 

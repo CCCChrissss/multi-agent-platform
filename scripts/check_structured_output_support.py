@@ -33,6 +33,11 @@ raw_decode() from the first `{` when a bare parse fails, so this now prints
 [OK] for claude-haiku too. Re-run this if a model in gateway/config.yaml
 changes again.
 
+2026-08-31 current state: workflow YAML files declare `gemini-cheap` again
+for the Windows-local demo path. The 2026-08-17 paragraph above is retained
+as provider-compatibility history, not a statement of the current workflow
+selection; aliases remain independently available in gateway/config.yaml.
+
 Note: this script calls the OpenAI SDK directly against the gateway, not
 through gateway/client.py::chat_with_tools() -- which is why it caught real
 model support while an earlier version of chat_with_tools() had a bug
@@ -42,9 +47,11 @@ still defensively strips a stray ```json fence around otherwise-valid
 content -- see its docstring for why that's kept even though the concurrent
 run that motivated it turned out to be confounded by that bug.
 
-Run with (needs `ollama serve` + `litellm --config gateway/config.yaml
---port 4000` up, e.g. via `uv run honcho start`):
-    uv run python -m scripts.check_structured_output_support
+Run from the repository root with Ollama and LiteLLM port 4000 available:
+    Windows PowerShell:
+        .\.venv\Scripts\python.exe -m scripts.check_structured_output_support
+    macOS / Bash:
+        uv run python -m scripts.check_structured_output_support
 """
 
 from __future__ import annotations
