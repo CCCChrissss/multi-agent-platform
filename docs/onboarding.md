@@ -1,6 +1,6 @@
 # 接手指南：跟著一次呼叫追下去
 
-這份文件是**閱讀程式碼的追蹤路線**：沿著 `stt_check_notify` 從 YAML 追到 MCP 呼叫。它原本以一次真實執行為敘事方式。Windows 的 Breeze-ASR-25 直接推論已驗證，但完整語音 workflow 尚未端到端跑通；Windows 請先讀 [current-windows-status.md](current-windows-status.md) 與 [windows-setup.md](windows-setup.md)，macOS 則保留 [README](../README.md) 的原作者 Bash 流程。
+這份文件是**閱讀程式碼的追蹤路線**：沿著 `stt_check_notify` 從 YAML 追到 MCP 呼叫。Windows 已完成一次這條 event-driven 語音 workflow；這份文件解釋程式流向，不取代操作手冊。Windows 請依 [windows-setup.md](windows-setup.md) 執行，並用 [current-windows-status.md](current-windows-status.md) 判讀日期化驗證範圍；macOS 則保留 [README](../README.md) 後方的原作者 Bash 流程。
 
 1. **workflow 定義（資料）** — [workflows/definitions/stt_check_notify.yaml](../workflows/definitions/stt_check_notify.yaml)
    每個 step 的 `command_type`/`completion_type`（事件名）、`input_schema`/`output_schema`、`prompt`。

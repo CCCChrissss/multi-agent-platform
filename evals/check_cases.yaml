@@ -19,9 +19,11 @@
 # promoted procedural rule's `evidence` points to as what it fixed --
 # docs/knowledge-distillation-plan.md §5 P3 item 1). A "regression" case
 # isn't necessarily one that was failing before the rule -- see
-# seed-drunk_ride_ltc below, added 2026-08-11: it already passed at baseline
-# (MODEL_NAME is gemini-strong, which clears every case here on its own,
-# see docs/knowledge-distillation-plan.md's ceiling-effect note), so
+# seed-drunk_ride_ltc below, added 2026-08-11: it passed under that historical
+# gemini-strong baseline (see docs/knowledge-distillation-plan.md's
+# ceiling-effect note). The current workflow declares gemini-cheap, so
+# current pass rates must be measured again rather than copied from that run.
+# In the historical run,
 # promoting its rule couldn't be measured as an *improvement* -- only as
 # "didn't regress anything." The label just means "this is what the active
 # rule's evidence points to, guard it going forward," not "this was broken

@@ -25,10 +25,15 @@ case there (docs' step 6), that's a git-tracked file edit, not DB state;
 revert it manually with `git checkout -- evals/check_cases.yaml` if you
 don't want to keep it.
 
-Run with:
-    uv run python -m scripts.reset_exclusion_actor_demo [--dry-run]
+Run from the repository root, always previewing first:
+    Windows PowerShell:
+        .\.venv\Scripts\python.exe -m scripts.reset_exclusion_actor_demo --dry-run
+    macOS / Bash:
+        uv run python -m scripts.reset_exclusion_actor_demo --dry-run
 
-Requires the local stack (`uv run honcho start`).
+Requires PostgreSQL. The non-dry-run form deletes the demo's matching
+episodic/procedural records and disposable eval data; inspect `--dry-run`
+output and docs/exclusion-actor-distinction-demo.md before authorizing it.
 """
 
 from __future__ import annotations

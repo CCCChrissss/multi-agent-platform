@@ -3,6 +3,10 @@ model_list:
     litellm_params:
       model: ollama_chat/qwen2.5:3b
       api_base: http://localhost:11434
+  - model_name: local-qwen3
+    litellm_params:
+      model: ollama_chat/qwen3:4b-instruct-2507-q4_K_M
+      api_base: http://localhost:11434
   # Provider aliases remain available independently of which workflow uses
   # them. The active choice belongs to workflows/definitions/*.yaml's
   # per-step `model:` fields; changing an alias here does not switch a
@@ -17,12 +21,12 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY
   - model_name: gemini-strong
     litellm_params:
-      # llm/exclusion_judge.py::MODEL_NAME as of 2026-08-11 (TODO.md's
-      # exclusion-judge-model-choice) -- promoted from diagnostic-only
-      # (docs/knowledge-distillation-plan.md P2-kickoff's evals/run_eval.py
-      # --model gemini-strong comparison run) to production after
-      # gemini-cheap measured 0/5 on the drunk_driving_bike case vs this
-      # model's 15/15. `gemini-3.1-pro` (no suffix) 404s -- confirmed
+      # Retained as a diagnostic/future alias; current workflow model choices
+      # live in workflows/definitions/*.yaml and use gemini-cheap as of
+      # 2026-08-31. This alias was promoted during the historical
+      # docs/knowledge-distillation-plan.md comparison after gemini-cheap
+      # measured 0/5 on drunk_driving_bike vs this model's 15/15.
+      # `gemini-3.1-pro` (no suffix) 404s -- confirmed
       # against the real /v1beta/models ListModels endpoint that the actual
       # name is `gemini-3.1-pro-preview` (same 3.1 generation as
       # gemini-cheap's flash-lite, just the pro tier); `gemini-2.5-pro` is

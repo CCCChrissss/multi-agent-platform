@@ -3,9 +3,11 @@
 本文件是這個 repository 的 Windows 主操作手冊。開始前先看 [current-windows-status.md](current-windows-status.md)：它記錄哪些項目已在本機驗證、哪些只是保留的上游功能。
 
 > [!IMPORTANT]
-> 2026-08-27 的狀態是：PostgreSQL、pgvector、Ollama、`local-qwen`、`local-embed` 與五個 application service 都已驗證；Breeze-ASR-25 已完成 CUDA / FP16 直接載入、範例音檔轉錄與 workflow 內呼叫。`stt_check_notify` 已完成一次 event-driven 端到端執行；Windows 常駐服務模式尚未建立或驗證。
+> 2026-08-31 的狀態是：PostgreSQL、pgvector、Ollama、`local-qwen`、`local-embed` 與五個 application service 都曾驗證；Breeze-ASR-25 已完成 CUDA / FP16 直接載入、範例音檔轉錄與 workflow 內呼叫。`stt_check_notify` 與 `stt_exclusion_notify` 都各自完成過一次 event-driven 執行。2026-09-01 已移除所有雲端 API key，目前不能重新執行使用 `gemini-cheap` 的完整 workflow。日期化狀態以 [current-windows-status.md](current-windows-status.md) 為準。
 
-## 1. 目前使用的本機路徑
+## 1. 先設定自己的本機路徑
+
+本手冊的所有指令都從 repository 根目錄執行。以下表格是目前已驗證電腦的路徑範例，不是其他使用者必須照抄的固定值：
 
 | 用途 | 路徑 |
 |---|---|
@@ -18,7 +20,19 @@
 | Ollama models | `D:\Projects\multi-agent平台架設\.ollama\models` |
 | PostgreSQL 測試資料庫 | `agent_architecture_test` |
 
-路徑含中文與連字號，PowerShell 指令應以單引號包住完整路徑。
+其他使用者只需要把每個「新 terminal」指令區塊第一行的 `$RepoRoot` 改成自己的 repository 絕對路徑。路徑含中文、空白或連字號時，使用 `-LiteralPath`，不要依賴未初始化的 `$RepoRoot`。
+
+每個新的 VS Code PowerShell terminal 都是獨立 session，不會繼承其他 terminal 的變數。以下是共用的安全前置區塊；後續 Terminal A、B、C 會各自完整重複必要內容：
+
+```powershell
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+Set-Location -LiteralPath $RepoRoot
+```
 
 ## 2. 前置工具
 
@@ -33,9 +47,14 @@
 在 repository 根目錄檢查：
 
 ```powershell
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+Set-Location -LiteralPath $RepoRoot
 git --version
-& 'C:\Users\User\.local\bin\uv.exe' --version
+$uvExe = Join-Path $env:USERPROFILE '.local\bin\uv.exe'
+& $uvExe --version
 .\.venv\Scripts\python.exe --version
 ```
 
@@ -44,11 +63,17 @@ git --version
 ### 尚未建立 `.venv` 時
 
 ```powershell
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
-$env:HF_HUB_CACHE = 'D:\Projects\multi-agent平台架設\.hf-cache'
-& 'C:\Users\User\.local\bin\uv.exe' python install 3.11
-& 'C:\Users\User\.local\bin\uv.exe' sync
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+$uvExe = Join-Path $env:USERPROFILE '.local\bin\uv.exe'
+Set-Location -LiteralPath $RepoRoot
+$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
+$env:HF_HUB_CACHE = Join-Path $WorkspaceRoot '.hf-cache'
+& $uvExe python install 3.11
+& $uvExe sync
 ```
 
 `uv sync` 依 [pyproject.toml](../pyproject.toml) 與 [uv.lock](../uv.lock) 建立環境。Windows 會從 PyTorch 官方 `cu132` index 安裝 `torch 2.13.0+cu132`；這台電腦已完成。除非 lockfile 或依賴改變，不必每次啟動服務都重跑。
@@ -94,7 +119,11 @@ psql -d agent_architecture_test -c "SELECT extversion FROM pg_extension WHERE ex
 只在 `.env` 不存在時複製範本：
 
 ```powershell
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+Set-Location -LiteralPath $RepoRoot
 if (-not (Test-Path -LiteralPath '.env')) {
     Copy-Item -LiteralPath '.env.example' -Destination '.env'
 }
@@ -114,13 +143,26 @@ PERSISTENCE_DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/agen
 - `stt_exclusion_notify` 的三個 agent step 目前也都使用 `gemini-cheap`，需要有效的 `GEMINI_API_KEY`，不需要 Anthropic key。
 - 不要為本機測試填假 key，也不要把真實 key 寫進 `.env.example`。
 
-## 5. Ollama 與本機模型
+2026-09-01 的目前狀態是 `ANTHROPIC_API_KEY` 與 `GEMINI_API_KEY` 都未設定。因此上面兩項只描述執行需求與歷史驗證，現在不能直接執行完整 workflow；待未來取得可用 provider credential 後再重新驗證。
 
-每次開新的 PowerShell，先設定這台電腦使用的路徑：
+建議讓 `.env` 裡的 `WORKFLOW_DEF_PATH` 保持註解或不存在，並由 Terminal A、B 明確設定。Honcho 的 `-e .env` 會讀取該檔；如果 `.env` 固定寫了另一份 workflow，可能覆蓋 terminal 的選擇，造成 Runtime、workers 與 trigger 不一致。可先檢查：
 
 ```powershell
-$env:PATH = 'C:\Users\User\AppData\Local\Programs\Ollama;' + $env:PATH
-$env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
+Select-String -LiteralPath '.env' -Pattern '^WORKFLOW_DEF_PATH='
+```
+
+正常建議是沒有輸出；若有輸出，先確認它與本次要執行的 `$WorkflowDef` 完全相同，或將該行改回註解。
+
+## 5. Ollama 與本機模型
+
+每次開新的 PowerShell，先用使用者目錄與 workspace 組出路徑：
+
+```powershell
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+$ollamaBin = Join-Path $env:LOCALAPPDATA 'Programs\Ollama'
+$env:PATH = "$ollamaBin;" + $env:PATH
+$env:OLLAMA_MODELS = Join-Path $WorkspaceRoot '.ollama\models'
 ```
 
 重要：`OLLAMA_MODELS` 是 Ollama **server 啟動時**讀取的。如果 Ollama Desktop 已在背景佔用 11434，之後只在 VS Code terminal 設定這個變數，不會改變既有 server 的 model 目錄。建議本專案統一由 Honcho / Procfile 啟動 Ollama，啟動前先從 Windows 系統列退出 Ollama Desktop。
@@ -134,6 +176,7 @@ ollama list
 預期至少包含：
 
 - `qwen2.5:3b`
+- `qwen3:4b-instruct-2507-q4_K_M`
 - `bge-m3`
 
 如果只想單獨啟動 Ollama，可在設定上述變數後執行 `ollama serve`。最簡單的完整服務路徑則是讓 [Procfile](../Procfile) 啟動它；啟動前先確認 11434 沒有被 Windows 背景版 Ollama 占用。
@@ -175,18 +218,29 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_exclusion_notify.yaml'
 
 ## 7. 啟動五個常駐服務
 
-第一個 PowerShell：
+第一個 PowerShell（Terminal A：Services）：
 
 這個 terminal 建議直接使用 VS Code 的整合式 PowerShell。執行前再次確認 11434 是空的；否則 Honcho 裡的 `ollama` 會啟動失敗，且背景 Ollama 可能讀取另一個 model 目錄。
 
 ```powershell
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+$uvBin = Join-Path $env:USERPROFILE '.local\bin'
+$ollamaBin = Join-Path $env:LOCALAPPDATA 'Programs\Ollama'
+Set-Location -LiteralPath $RepoRoot
 $env:PYTHONUTF8 = '1'
-$env:PATH = 'C:\Users\User\.local\bin;C:\Users\User\AppData\Local\Programs\Ollama;' + $env:PATH
-$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
-$env:HF_HUB_CACHE = 'D:\Projects\multi-agent平台架設\.hf-cache'
-$env:OLLAMA_MODELS = 'D:\Projects\multi-agent平台架設\.ollama\models'
-$env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
+$env:PATH = "$uvBin;$ollamaBin;" + $env:PATH
+$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
+$env:HF_HUB_CACHE = Join-Path $WorkspaceRoot '.hf-cache'
+$env:OLLAMA_MODELS = Join-Path $WorkspaceRoot '.ollama\models'
+$WorkflowDef = 'workflows/definitions/stt_check_notify.yaml'
+if (-not (Test-Path -LiteralPath $WorkflowDef -PathType Leaf)) {
+    throw "找不到 workflow：$WorkflowDef"
+}
+$env:WORKFLOW_DEF_PATH = $WorkflowDef
 .\.venv\Scripts\honcho.exe start -f Procfile -e .env
 ```
 
@@ -230,6 +284,7 @@ $ollamaModels = (Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags').model
 $ollamaModels
 
 if ($ollamaModels -notcontains 'qwen2.5:3b' -or
+    $ollamaModels -notcontains 'qwen3:4b-instruct-2507-q4_K_M' -or
     $ollamaModels -notcontains 'bge-m3:latest') {
     throw 'Ollama 沒有讀到專案 model 目錄；請檢查 OLLAMA_MODELS 與啟動順序。'
 }
@@ -244,15 +299,16 @@ if ($ollamaModels -notcontains 'qwen2.5:3b' -or
 預期看到：
 
 - `local-qwen`
+- `local-qwen3`
 - `local-embed`
 - `breeze-asr`
 - `claude-haiku`
 - `gemini-cheap`
 - `gemini-strong`
 
-注意：alias 出現在 `/v1/models` 不代表背後 provider 一定可用。沒有 key 的 Anthropic / Gemini alias 仍會在實際呼叫時失敗。
+注意：alias 出現在 `/v1/models` 不代表背後 provider 一定可用。目前 Anthropic 與 Gemini key 都未設定，所以三個雲端 alias 即使出現在清單也不可呼叫。Gemini 是先前曾成功呼叫的歷史紀錄，不代表現在仍可用。
 
-## 9. 確認 `local-qwen` 與 `local-embed`
+## 9. 確認 `local-qwen`、`local-qwen3` 與 `local-embed`
 
 ### `local-qwen`
 
@@ -272,6 +328,42 @@ $chatResponse.choices[0].message.content
 ```
 
 成功時會看到模型文字回覆。
+
+### `local-qwen3`
+
+新模型使用相同 API，只需更換 request 的 alias：
+
+```powershell
+$chatBody = @{
+    model = 'local-qwen3'
+    messages = @(@{ role = 'user'; content = '只回覆 OK' })
+} | ConvertTo-Json -Depth 5
+
+$chatResponse = Invoke-RestMethod `
+    -Uri 'http://127.0.0.1:4000/v1/chat/completions' `
+    -Method Post `
+    -ContentType 'application/json' `
+    -Body $chatBody
+
+$chatResponse.choices[0].message.content
+```
+
+### 切換 workflow 使用的 agent 模型
+
+模型有兩層設定，不能混為一談：
+
+1. [gateway/config.yaml](../gateway/config.yaml) 定義 alias 對應的 provider；例如 `local-qwen3` 對應 Ollama 的 `qwen3:4b-instruct-2507-q4_K_M`。
+2. [workflows/definitions/](../workflows/definitions/) 內每個 step 的 `model:` 才決定 workflow 實際使用哪個 alias。
+
+只想測試模型時，不必修改 workflow，直接在上面的 LiteLLM request 將 `model` 設成 `local-qwen3` 即可。要讓某份 workflow 改用新模型時：
+
+1. 停止 Terminal A（Services）與 Terminal B（Workers）。
+2. 在選定的 workflow YAML 內，只將要切換的 agent step（例如 `stt`、`check`、`notified`）之 `model: gemini-cheap` 改為 `model: local-qwen3`。
+3. 不要修改 `breeze-asr` 或 `local-embed`；前者是語音辨識，後者是 embedding，不是 agent 對話模型。
+4. 依第 6 至 7 節，讓 Terminal A、B 使用同一個 `WORKFLOW_DEF_PATH` 重新啟動。
+5. 先執行本節的 LiteLLM request，再執行 Agent Runtime 基本 request，最後才觸發完整 workflow。
+
+若要退回舊本機模型，將相同 `model:` 改為 `local-qwen`；要恢復雲端模型，改回對應 alias，並先確認所需 API key 已設定。修改 workflow YAML 後必須重啟 Runtime 與 workers，既有 process 不會熱載入變更。
 
 ### `local-embed`
 
@@ -305,9 +397,14 @@ WHERE prefix LIKE '_global.semantic.insurance_product.%';
 目前 Windows 實機是 `59`，與 [kgi_ltc.yaml](../data/insurance_product/kgi_ltc.yaml) 的理論筆數一致，表示 seed 已完成，可以跳過。新的空資料庫或筆數不符時，先確認本節的 `local-embed` 呼叫回傳 1024 維，再執行：
 
 ```powershell
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+Set-Location -LiteralPath $RepoRoot
 $env:PYTHONUTF8 = '1'
-$env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
+$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
 .\.venv\Scripts\python.exe -m scripts.seed_insurance_memory
 ```
 
@@ -315,7 +412,7 @@ $env:UV_CACHE_DIR = 'D:\Projects\multi-agent平台架設\.uv-cache'
 
 ## 10. Agent Runtime 基本 request
 
-這個 request 不經過 STT，可獨立確認 port 8003 的 `check` route 與 `local-qwen`：
+這個 request 不經過 STT，可獨立確認 port 8003 的 `check` route 與 Terminal A 啟動時載入的 workflow model。兩份目前的 workflow YAML 都宣告 `gemini-cheap`，所以這不是 `local-qwen` 測試；`local-qwen` 應使用上一節的 LiteLLM request 驗證：
 
 ```powershell
 $agentBody = @{
@@ -335,12 +432,22 @@ Invoke-RestMethod `
 
 ## 11. 啟動 event-driven workers
 
-第三個 PowerShell：
+第二個長駐 PowerShell（Terminal B：Workers）：
 
 ```powershell
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+Set-Location -LiteralPath $RepoRoot
 $env:PYTHONUTF8 = '1'
-$env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
+$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
+$WorkflowDef = 'workflows/definitions/stt_check_notify.yaml'
+if (-not (Test-Path -LiteralPath $WorkflowDef -PathType Leaf)) {
+    throw "找不到 workflow：$WorkflowDef"
+}
+$env:WORKFLOW_DEF_PATH = $WorkflowDef
 .\.venv\Scripts\honcho.exe start -f Procfile.workers -e .env
 ```
 
@@ -348,12 +455,17 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 
 ## 12. 觸發 workflow
 
-第四個 PowerShell或 workers 以外的任一個 PowerShell：
+第三個 PowerShell（Terminal C：Client）：
 
 ```powershell
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+Set-Location -LiteralPath $RepoRoot
+$WorkflowDef = 'workflows/definitions/stt_check_notify.yaml'
 .\.venv\Scripts\python.exe -m orchestrator.trigger `
-    --workflow-def workflows/definitions/stt_check_notify.yaml `
+    --workflow-def $WorkflowDef `
     --payload '{\"audio_ref\":\"samples/gen_tsmc_01.wav\"}'
 ```
 
@@ -361,8 +473,8 @@ Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 
 命令成功送出後會印出 `thread_id`。請先複製保存；後續查詢都以它為索引。
 
-> [!WARNING]
-> Breeze-ASR-25 直接推論已就緒，但這條完整觸發路徑仍是下一階段程序，不是 2026-08-27 已完成的端到端驗證結果。
+> [!NOTE]
+> `stt_check_notify` 與 `stt_exclusion_notify` 都曾依這條 event-driven 路徑完成一次實機執行。這是單次成功紀錄，不代表長時間常駐或異常自動恢復已驗證。
 
 ## 13. 查看結果、thread_id 與 Agent / MCP log
 
@@ -444,7 +556,11 @@ ORDER BY created_at;
 若任何一項仍是 `True`，或 Honcho terminal 已關閉但背景仍有 Master/worker，使用 repository 內的範圍限定腳本。先以 `-WhatIf` 預覽，再實際清理：
 
 ```powershell
-Set-Location 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+Set-Location -LiteralPath $RepoRoot
 .\scripts\stop_windows_stack.ps1 -WhatIf
 .\scripts\stop_windows_stack.ps1
 ```
@@ -466,4 +582,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop_windows_s
 
 第一項檢查 Python 語法、編碼、設定引用與 Markdown 連結；第二項驗證 Windows 暫存音檔行為。它們不會驗證 PostgreSQL、模型、LLM API 或完整 workflow。
 
-其他 smoke tests、前置條件與目前已知 CI 失敗見 [testing.md](testing.md)。
+其他 smoke tests、前置條件與目前 CI 狀態見 [testing.md](testing.md)。

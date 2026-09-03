@@ -24,10 +24,15 @@ approve/reject/edit/skip.
   state if a rejected case turning up again in review actually becomes a
   problem in practice.
 
-Run with:
-    uv run python -m scripts.review_episodic --scope stt_exclusion_notify/check [--key pending-...]
+Run from the repository root:
+    Windows PowerShell:
+        .\.venv\Scripts\python.exe -m scripts.review_episodic --scope stt_exclusion_notify/check [--key pending-...]
+    macOS / Bash:
+        uv run python -m scripts.review_episodic --scope stt_exclusion_notify/check [--key pending-...]
 
-Requires the local stack (`uv run honcho start`).
+Requires PostgreSQL and the repository environment. This CLI does not need
+STT, notified, Agent Runtime, or event-driven workers. Approve/edit changes
+the production episodic store; inspect the case before choosing `a`.
 """
 
 from __future__ import annotations

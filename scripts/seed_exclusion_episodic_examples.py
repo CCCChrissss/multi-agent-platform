@@ -1,11 +1,9 @@
-"""One-time bootstrap so docs/knowledge-distillation-plan.md P2 (the
-distiller) has something real to read from `default/episodic/
-stt_exclusion_notify/check` -- that scope is genuinely empty in production
-right now: the `stt_exclusion_notify.memory_writer` consumer group only
-adopted its topic *after* the only real runs so far (P4/P5's verification,
-2026-08-07), so it skipped that history via `start_from="now"`
-(event_bus/base.py's subscribe()) instead of replaying it. Nothing will
-land there again until real stt_exclusion_notify runs happen going forward.
+"""Historical one-time bootstrap for docs/knowledge-distillation-plan.md
+P2, written when `default/episodic/stt_exclusion_notify/check` was empty.
+That premise is no longer current: production memory_writer can populate
+the scope, and the 2026-08-31 Windows DB has one pending episodic there.
+This script remains a deterministic known-correct seed corpus for demos;
+it is not required when enough human-approved production episodic exists.
 
 Content is three *different* transcripts from evals/check_cases.yaml --
 deliberately not reused, on the theory that reusing an eval transcript as
@@ -81,8 +79,16 @@ showing scripts/review_episodic.py correct a real wrong answer before it's
 allowed to become distillation material. This file stays the "known-correct
 foundational corpus" for the 酒駕跨條文 blind spot that's already resolved.
 
-Run with:
-    uv run python -m scripts.seed_exclusion_episodic_examples
+Run from the repository root:
+    Windows PowerShell:
+        .\.venv\Scripts\python.exe -m scripts.seed_exclusion_episodic_examples
+    macOS / Bash:
+        uv run python -m scripts.seed_exclusion_episodic_examples
+
+Requires PostgreSQL and local-embed through LiteLLM/Ollama because these
+writes are indexed. It writes the known-correct corpus directly as active
+episodic and therefore intentionally bypasses P5's production pending
+review path; do not run it merely to inspect current data.
 """
 
 from __future__ import annotations

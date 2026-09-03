@@ -51,10 +51,16 @@ an edited version gets approved, the stored value gets `edited_by_reviewer:
 true` -- content diverges from what the distiller actually produced, and
 `created_by` alone would misattribute the final text to it.
 
-Run with:
-    uv run python -m scripts.review_memory --scope stt_exclusion_notify/check [--repeats 3] [--model gemini-cheap] [--key pending-...]
+Run from the repository root:
+    Windows PowerShell:
+        .\.venv\Scripts\python.exe -m scripts.review_memory --scope stt_exclusion_notify/check --repeats 3 [--model gemini-cheap] [--key pending-...]
+    macOS / Bash:
+        uv run python -m scripts.review_memory --scope stt_exclusion_notify/check --repeats 3 [--model gemini-cheap] [--key pending-...]
 
-Requires the local stack (`uv run honcho start`).
+Requires PostgreSQL, LiteLLM on port 4000, the selected evaluation model,
+and `local-embed` (LiteLLM -> Ollama/bge-m3). It does not require STT,
+notified, Agent Runtime, or event-driven workers. Approve/reject changes the
+production procedural store; see docs/knowledge-distillation-windows.md.
 """
 
 from __future__ import annotations

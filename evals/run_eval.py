@@ -18,9 +18,10 @@ the same correct involves_exclusion=false judgment sometimes leaves
 matched_articles empty even when the model's own reasoning discussed
 specific articles, depending on how it interprets "relevant".
 
-`--tenant` exists for §4.3's candidate-rule evaluation (a pending procedural
-rule written active under a throwaway tenant, not yet implemented here --
-P3's job).
+`--tenant` supports §4.3's candidate-rule evaluation. scripts/
+stage_candidate_for_eval.py mirrors active production rules plus one pending
+candidate as active under the throwaway `eval` tenant; `--tenant eval` then
+exercises the real injection path without changing `default`.
 
 `--model` overrides judge_exclusion()'s `model` argument for this run only
 (docs/generic-agent-runtime-plan.md P5 gave that function a real `model`
@@ -30,11 +31,16 @@ answer "is drunk_driving_bike's 0% pass rate a model-capability ceiling, or
 something fixable in the prompt/harness" without touching the production
 model declared in workflows/definitions/stt_exclusion_notify.yaml.
 
-Run with:
-    uv run python -m evals.run_eval [--repeats 3] [--tenant default] [--model gemini-strong]
+Run from the repository root:
+    Windows PowerShell:
+        .\.venv\Scripts\python.exe -m evals.run_eval --repeats 3 --tenant default [--model gemini-strong]
+    macOS / Bash:
+        uv run python -m evals.run_eval --repeats 3 --tenant default [--model gemini-strong]
 
-Requires the local stack (`uv run honcho start`) and a seeded policy tree
-(`uv run python -m scripts.seed_insurance_memory`).
+Requires PostgreSQL, LiteLLM on port 4000, the selected model provider, and
+a seeded policy tree (`scripts.seed_insurance_memory`). It does not require
+STT, notified, Agent Runtime, or event-driven workers. See
+docs/knowledge-distillation-windows.md for the baseline/candidate order.
 """
 
 from __future__ import annotations
