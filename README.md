@@ -34,11 +34,11 @@
 stt -> check -> notified
 ```
 
-- **stt**：透過 `MCPGateway` 連上 [mcp_servers/stt](mcp_servers/stt/)（轉錄）與 [mcp_servers/format_check](mcp_servers/format_check/)（格式檢查）兩個 MCP server，透過 LiteLLM Gateway 呼叫 workflow 宣告的 LLM 自行決定要不要先檢查音檔格式、再進行轉錄（[llm/stt_agent.py](llm/stt_agent.py)）。目前 `stt_check_notify` 與 `stt_exclusion_notify` 都宣告 `gemini-cheap`；兩者共用相同 agent 邏輯，但 model alias 由各自 YAML 決定。實際轉錄仍由 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（[services/stt/breeze_asr.py](services/stt/breeze_asr.py)）負責，不會因 agent 決策模型切換而被取代。
+- **stt**：透過 `MCPGateway` 連上 [mcp_servers/stt](mcp_servers/stt/)（轉錄）與 [mcp_servers/format_check](mcp_servers/format_check/)（格式檢查）兩個 MCP server，透過 LiteLLM Gateway 呼叫 workflow 宣告的 LLM 自行決定要不要先檢查音檔格式、再進行轉錄（[llm/stt_agent.py](llm/stt_agent.py)）。目前 `stt_check_notify` 與 `stt_exclusion_notify` 都宣告 `local-qwen3`；兩者共用相同 agent 邏輯，但 model alias 由各自 YAML 決定。實際轉錄仍由 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（[services/stt/breeze_asr.py](services/stt/breeze_asr.py)）負責，不會因 agent 決策模型切換而被取代。
 - **check**：兩個場景各自一套判斷邏輯，[agents/runtime.py](agents/runtime.py) 的 `/check/run` 路由依啟動時選的 workflow 決定呼叫哪一套（見下方「切換示範 workflow」）：
-  - `stt_check_notify`：透過 LiteLLM Gateway 呼叫 LLM（目前宣告 `gemini-cheap`）判斷逐字稿是否提到台積電，並用確定性的別名比對當 backstop（[llm/tsmc_judge.py](llm/tsmc_judge.py)）。
-  - `stt_exclusion_notify`：透過 LiteLLM Gateway 呼叫 LLM（目前工作樹宣告 `gemini-cheap`）判斷客戶描述的情況是否涉及保單除外責任——不會把保單條款塞進 prompt，而是透過 [`browse_semantic_memory`](mcp_servers/memory/server.py) 這個 MCP tool 自己決定要往下鑽哪個分支，只把讀到過的條文拿來引用（[llm/exclusion_judge.py](llm/exclusion_judge.py)，詳見 [docs/exclusion-scenario-plan.md](docs/exclusion-scenario-plan.md)）。
-- **notified**：兩個場景共用同一顆 agent，不知道場景邏輯——只收「要不要發、主旨、內容」，透過 `MCPGateway`（[mcp_servers/gateway.py](mcp_servers/gateway.py)）連上 [mcp_servers/notified](mcp_servers/notified/)（Slack / Gmail 兩個 tool，背後打 [services/notified/](services/notified/)）。目前兩份 workflow 都宣告 `gemini-cheap`。`should_notify=false` 時會在呼叫 LLM / tool 前直接回傳 `[]`；需要通知時才由模型決定管道。目前 notified service 是本機 placeholder，不會真的對外寄送。
+  - `stt_check_notify`：透過 LiteLLM Gateway 呼叫 LLM（目前宣告 `local-qwen3`）判斷逐字稿是否提到台積電，並用確定性的別名比對當 backstop（[llm/tsmc_judge.py](llm/tsmc_judge.py)）。
+  - `stt_exclusion_notify`：透過 LiteLLM Gateway 呼叫 LLM（目前工作樹宣告 `local-qwen3`）判斷客戶描述的情況是否涉及保單除外責任——不會把保單條款塞進 prompt，而是透過 [`browse_semantic_memory`](mcp_servers/memory/server.py) 這個 MCP tool 自己決定要往下鑽哪個分支，只把讀到過的條文拿來引用（[llm/exclusion_judge.py](llm/exclusion_judge.py)，詳見 [docs/exclusion-scenario-plan.md](docs/exclusion-scenario-plan.md)）。
+- **notified**：兩個場景共用同一顆 agent，不知道場景邏輯——只收「要不要發、主旨、內容」，透過 `MCPGateway`（[mcp_servers/gateway.py](mcp_servers/gateway.py)）連上 [mcp_servers/notified](mcp_servers/notified/)（Slack / Gmail 兩個 tool，背後打 [services/notified/](services/notified/)）。目前兩份 workflow 都宣告 `local-qwen3`。`should_notify=false` 時會在呼叫 LLM / tool 前直接回傳 `[]`；需要通知時才由模型決定管道。目前 notified service 是本機 placeholder，不會真的對外寄送。
 
 ### 單一 runtime process
 
@@ -77,7 +77,7 @@ Service 層     services/{stt,notified}/  <------------------------+
 
 ## Windows / PowerShell 執行（目前主線）
 
-Windows 的安裝、啟動、workflow 切換、trigger、停止與常見錯誤，統一維護在 [Windows 主操作手冊](docs/windows-setup.md)。README 只保留入口與執行順序，避免同一套 PowerShell 指令在多處漂移。
+Windows 的工具載點、從零安裝、模型下載、啟動、workflow 切換、trigger、停止與常見錯誤，統一維護在 [Windows 主操作手冊](docs/windows-setup.md#2-從全新-windows-安裝開發工具與專案)。README 只保留入口與執行順序，避免同一套 PowerShell 指令在多處漂移。
 
 > [!IMPORTANT]
 > 請不要直接從網路片段或後方 macOS / Bash 歷史區塊拼接指令。每個 VS Code PowerShell terminal 都是獨立 session，必須依 Windows 主操作手冊重新設定 repository 路徑與必要環境變數。
@@ -123,7 +123,7 @@ Windows 的安裝、啟動、workflow 切換、trigger、停止與常見錯誤�
 目前兩份示範 workflow 都曾在 Windows 完成一次 event-driven 執行；這不等於長時間常駐、異常自動恢復或知識蒸餾全鏈已完成。日期、thread ID 與當時環境見 [current-windows-status.md](docs/current-windows-status.md)。
 
 > [!WARNING]
-> 2026-09-01 已移除本機所有雲端 API key。目前兩份 workflow 的三個 step 都宣告 `gemini-cheap`，因此只能保留過去成功紀錄，現在無法重新執行完整 workflow。`local-qwen`、`local-qwen3`、`local-embed` 與 `breeze-asr` 不需要雲端 key，但目前 workflow YAML 尚未選用本機 agent model。模型切換方式見 [Windows 操作手冊的模型切換段落](docs/windows-setup.md#切換-workflow-使用的-agent-模型)。
+> 2026-09-01 已移除本機所有雲端 API key。目前兩份 workflow 的三個 agent step 都已改用 `local-qwen3`，`local-embed` 與 `breeze-asr` 也都不需要雲端 key；但切換後的完整 event-driven workflow 必須以新的 `thread_id` 重新驗證，不能沿用先前 Gemini 的成功紀錄。模型切換方式見 [Windows 操作手冊的模型切換段落](docs/windows-setup.md#切換-workflow-使用的-agent-模型)。
 
 ---
 

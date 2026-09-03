@@ -3,7 +3,7 @@
 本文件是這個 repository 的 Windows 主操作手冊。開始前先看 [current-windows-status.md](current-windows-status.md)：它記錄哪些項目已在本機驗證、哪些只是保留的上游功能。
 
 > [!IMPORTANT]
-> 2026-08-31 的狀態是：PostgreSQL、pgvector、Ollama、`local-qwen`、`local-embed` 與五個 application service 都曾驗證；Breeze-ASR-25 已完成 CUDA / FP16 直接載入、範例音檔轉錄與 workflow 內呼叫。`stt_check_notify` 與 `stt_exclusion_notify` 都各自完成過一次 event-driven 執行。2026-09-01 已移除所有雲端 API key，目前不能重新執行使用 `gemini-cheap` 的完整 workflow。日期化狀態以 [current-windows-status.md](current-windows-status.md) 為準。
+> 2026-08-31 的歷史狀態是：PostgreSQL、pgvector、Ollama、`local-qwen`、`local-embed` 與五個 application service 都曾驗證；兩份 workflow 也曾以當時的 `gemini-cheap` 各完成一次 event-driven 執行。2026-09-03 工作樹已把兩份 workflow 改為 `local-qwen3`；該 alias 的文字回覆與 tool call 已驗證，但完整 event-driven workflow 必須用新的 `thread_id` 重新實測。日期化歷史見 [current-windows-status.md](current-windows-status.md)。
 
 ## 1. 先設定自己的本機路徑
 
@@ -20,7 +20,7 @@
 | Ollama models | `D:\Projects\multi-agent平台架設\.ollama\models` |
 | PostgreSQL 測試資料庫 | `agent_architecture_test` |
 
-其他使用者只需要把每個「新 terminal」指令區塊第一行的 `$RepoRoot` 改成自己的 repository 絕對路徑。路徑含中文、空白或連字號時，使用 `-LiteralPath`，不要依賴未初始化的 `$RepoRoot`。
+其他使用者只需要把每個「新 terminal」指令區塊第一行的 `$RepoRoot` 改成自己的 repository 絕對路徑。路徑含中文、空白或連字號時，使用 `-LiteralPath`，不要依賴未初始化的 `$RepoRoot`。全新電腦尚未 clone repository 時，先完成第 2 節，再使用下面的共用區塊。
 
 每個新的 VS Code PowerShell terminal 都是獨立 session，不會繼承其他 terminal 的變數。以下是共用的安全前置區塊；後續 Terminal A、B、C 會各自完整重複必要內容：
 
@@ -34,67 +34,145 @@ $WorkspaceRoot = Split-Path -Parent $RepoRoot
 Set-Location -LiteralPath $RepoRoot
 ```
 
-## 2. 前置工具
+## 2. 從全新 Windows 安裝開發工具與專案
 
-專案基準是 [.python-version](../.python-version) 指定的 Python 3.11。需要：
+專案基準是 [.python-version](../.python-version) 指定的 Python 3.11。建議使用 Windows 10/11 64-bit、VS Code 與 PowerShell。以下命令中的 `winget` 是 Windows Package Manager；若電腦沒有 `winget`，使用同一列的官方下載頁安裝。
 
-- Git for Windows
-- uv
-- Python 3.11（可由 uv 管理）
-- PostgreSQL + pgvector
-- Ollama
+| 工具 | 用途 | 建議安裝指令 | 官方下載／說明 |
+|---|---|---|---|
+| Git for Windows | clone、branch、commit、push | `winget install --id Git.Git -e --source winget` | [Git for Windows](https://git-scm.com/download/win) |
+| Visual Studio Code | 編輯程式與開啟 PowerShell terminal | `winget install --id Microsoft.VisualStudioCode -e --source winget` | [VS Code for Windows](https://code.visualstudio.com/download) |
+| GitHub CLI（建議） | 建立／檢查／合併 Pull Request | `winget install --id GitHub.cli -e --source winget` | [GitHub CLI](https://cli.github.com/) |
+| uv | 安裝 Python、建立 `.venv`、依 lockfile 安裝套件 | `winget install --id astral-sh.uv -e --source winget` | [uv Windows 安裝](https://docs.astral.sh/uv/getting-started/installation/) |
+| PostgreSQL 18 | event bus、checkpoint、call log、長期記憶 | 使用官方圖形安裝程式 | [PostgreSQL Windows installer](https://www.postgresql.org/download/windows/) |
+| Visual Studio Build Tools（僅 pgvector 編譯需要） | 提供 MSVC、C++ header 與 `nmake` | 使用官方圖形安裝程式並勾選 **Desktop development with C++** | [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/) |
+| Ollama | 執行本機聊天與 embedding 模型 | `irm https://ollama.com/install.ps1 | iex` | [Ollama for Windows](https://ollama.com/download/windows) |
 
-在 repository 根目錄檢查：
+安裝 Git、VS Code、GitHub CLI、uv 或 Ollama 後，關閉並重開 VS Code／PowerShell，讓新的 `PATH` 生效。Ollama 也可以只使用官方頁面的 Windows installer，不需要同時執行兩種安裝方式。
+
+### 2.1 驗證開發工具
+
+開啟新的 PowerShell：
 
 ```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
-if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
-    throw "找不到 repository：$RepoRoot"
-}
-Set-Location -LiteralPath $RepoRoot
 git --version
-$uvExe = Join-Path $env:USERPROFILE '.local\bin\uv.exe'
-& $uvExe --version
-.\.venv\Scripts\python.exe --version
+code --version
+gh --version
+uv --version
+ollama --version
 ```
 
-最後一行應顯示 Python 3.11.x。
+每一行都應顯示版本而不是「無法辨識」；若暫時不使用 GitHub CLI，只有 `gh --version` 可以略過。要用 GitHub 多人協作時，再登入並確認目前帳號：
 
-### 尚未建立 `.venv` 時
+```powershell
+gh auth login --web --git-protocol https
+gh auth status
+```
+
+不要執行或分享 `gh auth status --show-token`，也不要把 token 貼進 `.env` 或文件。
+
+### 2.2 Clone repository
+
+以下是全新安裝範例。若 repository 已存在，跳過 `git clone`，直接把 `$RepoRoot` 設為實際路徑：
+
+```powershell
+$RepoParent = 'D:\Projects\multi-agent平台架設'
+$RepoRoot = Join-Path $RepoParent 'multi-agent-platform'
+
+New-Item -ItemType Directory -Force -Path $RepoParent | Out-Null
+Set-Location -LiteralPath $RepoParent
+git clone https://github.com/CCCChrissss/multi-agent-platform.git
+Set-Location -LiteralPath $RepoRoot
+git status
+```
+
+成功時，`git status` 會顯示目前分支，且不會出現 `not a git repository`。
+
+### 2.3 安裝 Python 3.11 與全部 Python 套件
+
+不需要先到 python.org 安裝 Python，也不要逐項執行 `pip install`；uv 會安裝 Python 3.11，並依 [pyproject.toml](../pyproject.toml) 與 [uv.lock](../uv.lock) 建立一致的 `.venv`。
 
 ```powershell
 $RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
     throw "找不到 repository：$RepoRoot"
 }
+
 $WorkspaceRoot = Split-Path -Parent $RepoRoot
-$uvExe = Join-Path $env:USERPROFILE '.local\bin\uv.exe'
+$uvExe = (Get-Command uv -ErrorAction Stop).Source
 Set-Location -LiteralPath $RepoRoot
 $env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
 $env:HF_HUB_CACHE = Join-Path $WorkspaceRoot '.hf-cache'
+
 & $uvExe python install 3.11
 & $uvExe sync
 ```
 
-`uv sync` 依 [pyproject.toml](../pyproject.toml) 與 [uv.lock](../uv.lock) 建立環境。Windows 會從 PyTorch 官方 `cu132` index 安裝 `torch 2.13.0+cu132`；這台電腦已完成。除非 lockfile 或依賴改變，不必每次啟動服務都重跑。
+`uv sync` 會安裝 LiteLLM、Honcho、FastAPI、MCP SDK、PostgreSQL driver、PyTorch、Transformers、librosa 等本 repository 鎖定的依賴；除非 `pyproject.toml` 或 `uv.lock` 改變，不必每次啟動服務都重跑。Windows 目前會從 [PyTorch CUDA wheel index](https://download.pytorch.org/whl/cu132) 安裝 lockfile 指定版本。
 
-驗證 CUDA：
+驗證 Python、主要套件與 CUDA：
 
 ```powershell
-.\.venv\Scripts\python.exe -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+.\.venv\Scripts\python.exe --version
+.\.venv\Scripts\python.exe -c "import fastapi, litellm, mcp, torch, transformers; print('project imports: OK')"
+.\.venv\Scripts\python.exe -c "import torch; print('torch=', torch.__version__); print('cuda=', torch.version.cuda); print('available=', torch.cuda.is_available()); print('device=', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
 ```
 
-本機預期為 `2.13.0+cu132`、`13.2`、`True`與 `NVIDIA GeForce RTX 4050 Laptop GPU`。
+第一行必須是 Python 3.11.x，第二行必須印出 `project imports: OK`。目前實機的 CUDA 檢查為 `available=True` 與 `NVIDIA GeForce RTX 4050 Laptop GPU`；沒有相容 NVIDIA GPU 時可以啟動 CPU 路徑，但 Breeze-ASR 推論會明顯較慢。
 
 ## 3. PostgreSQL 與 pgvector
 
-本機已驗證 PostgreSQL 18.6、資料庫 `agent_architecture_test`、pgvector 0.8.6。資料庫密碼是安裝 PostgreSQL 時由使用者自行設定，不是 repository 產生的密碼。
+本機已驗證 PostgreSQL 18.6、資料庫 `agent_architecture_test`、pgvector 0.8.6。先從 [PostgreSQL 官方 Windows 頁面](https://www.postgresql.org/download/windows/) 進入 EDB installer，安裝時至少保留：
 
-最容易確認的方式是用 pgAdmin 4：
+- PostgreSQL Server
+- pgAdmin 4
+- Command Line Tools
 
-1. 展開 `Servers > PostgreSQL 18 > Databases > agent_architecture_test`。
-2. 右鍵資料庫，選 `Query Tool`。
-3. 執行：
+安裝程式會要求建立 `postgres` 使用者的密碼；這是使用者自行設定的密碼，repository 不會產生、保存或知道它。預設 port 使用 `5432`。安裝後可在 PowerShell 確認 service：
+
+```powershell
+Get-Service -Name 'postgresql*'
+```
+
+`Status` 應為 `Running`。
+
+### 3.1 建立資料庫
+
+在 pgAdmin 4：
+
+1. 展開 `Servers > PostgreSQL 18`。
+2. 右鍵 `Databases`，選 `Create > Database...`。
+3. Database 填入 `agent_architecture_test`，Owner 使用 `postgres`。
+4. 儲存後，對 `agent_architecture_test` 開啟 `Query Tool`。
+
+### 3.2 安裝並啟用 pgvector
+
+先在 `agent_architecture_test` 的 Query Tool 檢查 server 是否已具備 extension：
+
+```sql
+SELECT name, default_version
+FROM pg_available_extensions
+WHERE name = 'vector';
+```
+
+如果查到一列，直接執行本節後面的 `CREATE EXTENSION`。如果完全沒有資料，依 [pgvector 官方 Windows 安裝說明](https://github.com/pgvector/pgvector#installation-notes---windows) 編譯安裝：
+
+1. 安裝 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)，勾選 **Desktop development with C++**。
+2. 從開始功能表，以系統管理員身分開啟 **x64 Native Tools Command Prompt for VS 2022**。
+3. 下列區塊是 `cmd.exe` 語法，不是在一般 PowerShell 執行：
+
+```bat
+set "PGROOT=C:\Program Files\PostgreSQL\18"
+cd /d "%TEMP%"
+git clone --branch v0.8.6 --depth 1 https://github.com/pgvector/pgvector.git pgvector-0.8.6
+cd pgvector-0.8.6
+nmake /F Makefile.win
+nmake /F Makefile.win install
+```
+
+如果 PostgreSQL 安裝在其他版本或路徑，必須先調整 `PGROOT`。`nmake ... install` 會寫入 PostgreSQL 安裝目錄，因此需要系統管理員權限；如果 `pgvector-0.8.6` 目錄已存在，請換一個新的空目錄名稱，不要在不知道內容時直接刪除。
+
+完成後回到 pgAdmin 的 `agent_architecture_test` Query Tool：
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -106,10 +184,11 @@ WHERE extname = 'vector';
 
 查詢結果應有一列；本機已驗證版本為 `0.8.6`。
 
-也可以在 PostgreSQL `bin` 已加入 PATH 時使用 PowerShell：
+也可以直接指定 PostgreSQL 18 的 `psql.exe`，不依賴 PATH：
 
 ```powershell
-psql -d agent_architecture_test -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+$psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
+& $psql -U postgres -d agent_architecture_test -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
 ```
 
 `PERSISTENCE_DATABASE_URL` 必須使用你自己的帳號、密碼與資料庫名稱。不要把真實密碼貼進 README、`.env.example`、commit、issue 或聊天截圖。
@@ -139,11 +218,11 @@ PERSISTENCE_DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/agen
 
 目前金鑰規則：
 
-- 目前 `stt_check_notify` 的三個 agent step 都使用 `gemini-cheap`，需要有效的 `GEMINI_API_KEY`；乾淨重啟後已完成實際呼叫與一次完整 run。
-- `stt_exclusion_notify` 的三個 agent step 目前也都使用 `gemini-cheap`，需要有效的 `GEMINI_API_KEY`，不需要 Anthropic key。
+- 目前工作樹中 `stt_check_notify` 與 `stt_exclusion_notify` 的三個 agent step 都使用 `local-qwen3`，不需要 Anthropic 或 Gemini API key。
+- `claude-haiku`、`gemini-cheap`、`gemini-strong` alias 仍保留在 `gateway/config.yaml`；只有 workflow 改用它們時才需要相應的 API key。
 - 不要為本機測試填假 key，也不要把真實 key 寫進 `.env.example`。
 
-2026-09-01 的目前狀態是 `ANTHROPIC_API_KEY` 與 `GEMINI_API_KEY` 都未設定。因此上面兩項只描述執行需求與歷史驗證，現在不能直接執行完整 workflow；待未來取得可用 provider credential 後再重新驗證。
+2026-09-01 已移除 `ANTHROPIC_API_KEY` 與 `GEMINI_API_KEY`。這不會阻擋目前的本機 workflow，但 `local-qwen3` 的完整 event-driven 結果仍應以新的 `thread_id` 實測，不能沿用先前 Gemini run 當作證明。
 
 建議讓 `.env` 裡的 `WORKFLOW_DEF_PATH` 保持註解或不存在，並由 Terminal A、B 明確設定。Honcho 的 `-e .env` 會讀取該檔；如果 `.env` 固定寫了另一份 workflow，可能覆蓋 terminal 的選擇，造成 Runtime、workers 與 trigger 不一致。可先檢查：
 
@@ -155,6 +234,16 @@ Select-String -LiteralPath '.env' -Pattern '^WORKFLOW_DEF_PATH='
 
 ## 5. Ollama 與本機模型
 
+若第 2 節尚未安裝 Ollama，使用 [Ollama 官方 Windows 下載頁](https://ollama.com/download/windows)，或在 PowerShell 執行官方安裝命令：
+
+```powershell
+irm https://ollama.com/install.ps1 | iex
+```
+
+兩種方式擇一即可。安裝完成後，關閉並重開 PowerShell，再執行 `ollama --version`。
+
+### 5.1 將模型下載到 workspace 的 D 槽目錄
+
 每次開新的 PowerShell，先用使用者目錄與 workspace 組出路徑：
 
 ```powershell
@@ -163,11 +252,47 @@ $WorkspaceRoot = Split-Path -Parent $RepoRoot
 $ollamaBin = Join-Path $env:LOCALAPPDATA 'Programs\Ollama'
 $env:PATH = "$ollamaBin;" + $env:PATH
 $env:OLLAMA_MODELS = Join-Path $WorkspaceRoot '.ollama\models'
+New-Item -ItemType Directory -Force -Path $env:OLLAMA_MODELS | Out-Null
 ```
 
 重要：`OLLAMA_MODELS` 是 Ollama **server 啟動時**讀取的。如果 Ollama Desktop 已在背景佔用 11434，之後只在 VS Code terminal 設定這個變數，不會改變既有 server 的 model 目錄。建議本專案統一由 Honcho / Procfile 啟動 Ollama，啟動前先從 Windows 系統列退出 Ollama Desktop。
 
-確認已下載模型：
+第一次下載模型時：
+
+1. 先從 Windows 系統列完全退出 Ollama Desktop，避免既有 server 使用 C 槽預設目錄。
+2. 在第一個 PowerShell 設定上述變數後啟動 server，並保持 terminal 開啟：
+
+```powershell
+$ollamaExe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
+if (-not (Test-Path -LiteralPath $ollamaExe -PathType Leaf)) {
+    throw "找不到 Ollama：$ollamaExe"
+}
+& $ollamaExe serve
+```
+
+3. 另開第二個 PowerShell，重新設定路徑並下載三個模型：
+
+```powershell
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+$ollamaExe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'
+$env:OLLAMA_MODELS = Join-Path $WorkspaceRoot '.ollama\models'
+
+& $ollamaExe pull qwen2.5:3b
+& $ollamaExe pull qwen3:4b-instruct-2507-q4_K_M
+& $ollamaExe pull bge-m3
+& $ollamaExe list
+```
+
+模型用途與官方頁面：
+
+| Ollama 模型 | 專案 alias／用途 | 官方模型頁 |
+|---|---|---|
+| `qwen2.5:3b` | `local-qwen`，保留的舊本機 agent 模型 | [Ollama qwen2.5:3b](https://ollama.com/library/qwen2.5:3b) |
+| `qwen3:4b-instruct-2507-q4_K_M` | `local-qwen3`，目前 workflow 使用的本機 agent 模型 | [Ollama qwen3:4b-instruct-2507-q4_K_M](https://ollama.com/library/qwen3:4b-instruct-2507-q4_K_M) |
+| `bge-m3` | `local-embed`，長期記憶與知識蒸餾 embedding | [Ollama bge-m3](https://ollama.com/library/bge-m3) |
+
+`pull` 完成後，先在第二個 PowerShell 確認：
 
 ```powershell
 ollama list
@@ -178,6 +303,8 @@ ollama list
 - `qwen2.5:3b`
 - `qwen3:4b-instruct-2507-q4_K_M`
 - `bge-m3`
+
+確認完成後，再到第一個 PowerShell 對 `ollama serve` 按 `Ctrl+C`。後續改由第 7 節的 Honcho 啟動；server 已停止時不要單獨執行 `ollama list`，因為 client 沒有可連線的 Ollama server。
 
 如果只想單獨啟動 Ollama，可在設定上述變數後執行 `ollama serve`。最簡單的完整服務路徑則是讓 [Procfile](../Procfile) 啟動它；啟動前先確認 11434 沒有被 Windows 背景版 Ollama 占用。
 
@@ -193,6 +320,25 @@ Get-Process -Id $listener.OwningProcess
 ```
 
 若是 Ollama Desktop，先從系統列完全退出，重新確認 port 為 `False`。不要在未確認 PID 身分前直接強制終止 process。
+
+### 5.2 Breeze-ASR-25 語音辨識模型
+
+STT 使用 [MediaTek Research 的 Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)，不透過 `ollama pull`。第一次真正轉錄時，[services/stt/breeze_asr.py](../services/stt/breeze_asr.py) 會由 Transformers 自動下載並快取模型；第一次因此需要網路且會比後續慢。
+
+只想讓第一次 workflow 不必邊跑邊下載時，可以在 repository 根目錄預先下載：
+
+```powershell
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+Set-Location -LiteralPath $RepoRoot
+$env:HF_HUB_CACHE = Join-Path $WorkspaceRoot '.hf-cache'
+.\.venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download; print(snapshot_download(repo_id='MediaTek-Research/Breeze-ASR-25'))"
+```
+
+成功時會印出 snapshot 的本機 cache 路徑。這個步驟只下載權重，不會啟動 STT service；若跳過，第一次轉錄仍會自動下載。
 
 ## 6. 選擇 workflow
 
@@ -212,7 +358,7 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_check_notify.yaml'
 $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_exclusion_notify.yaml'
 ```
 
-這份目前需要有效的 `GEMINI_API_KEY`，並且必須先完成保單記憶 seed；不需要 Anthropic key。
+這份目前使用 `local-qwen3`，不需要雲端 API key，但必須先完成保單記憶 seed。
 
 `orchestrator.trigger --workflow-def` 只決定這次要觸發哪份定義，不能替已啟動的 Runtime / workers 切換設定。切換 workflow 時，兩批 Honcho 都要停止、設定同一個 `$env:WORKFLOW_DEF_PATH`，再重新啟動。
 
@@ -222,13 +368,16 @@ $env:WORKFLOW_DEF_PATH = 'workflows/definitions/stt_exclusion_notify.yaml'
 
 這個 terminal 建議直接使用 VS Code 的整合式 PowerShell。執行前再次確認 11434 是空的；否則 Honcho 裡的 `ollama` 會啟動失敗，且背景 Ollama 可能讀取另一個 model 目錄。
 
+### 7.1 台積電場景（Services）
+
 ```powershell
 $RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
     throw "找不到 repository：$RepoRoot"
 }
 $WorkspaceRoot = Split-Path -Parent $RepoRoot
-$uvBin = Join-Path $env:USERPROFILE '.local\bin'
+$uvExe = (Get-Command uv -ErrorAction Stop).Source
+$uvBin = Split-Path -Parent $uvExe
 $ollamaBin = Join-Path $env:LOCALAPPDATA 'Programs\Ollama'
 Set-Location -LiteralPath $RepoRoot
 $env:PYTHONUTF8 = '1'
@@ -237,6 +386,31 @@ $env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
 $env:HF_HUB_CACHE = Join-Path $WorkspaceRoot '.hf-cache'
 $env:OLLAMA_MODELS = Join-Path $WorkspaceRoot '.ollama\models'
 $WorkflowDef = 'workflows/definitions/stt_check_notify.yaml'
+if (-not (Test-Path -LiteralPath $WorkflowDef -PathType Leaf)) {
+    throw "找不到 workflow：$WorkflowDef"
+}
+$env:WORKFLOW_DEF_PATH = $WorkflowDef
+.\.venv\Scripts\honcho.exe start -f Procfile -e .env
+```
+
+### 7.2 除外責任場景（Services）
+
+```powershell
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+$uvExe = (Get-Command uv -ErrorAction Stop).Source
+$uvBin = Split-Path -Parent $uvExe
+$ollamaBin = Join-Path $env:LOCALAPPDATA 'Programs\Ollama'
+Set-Location -LiteralPath $RepoRoot
+$env:PYTHONUTF8 = '1'
+$env:PATH = "$uvBin;$ollamaBin;" + $env:PATH
+$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
+$env:HF_HUB_CACHE = Join-Path $WorkspaceRoot '.hf-cache'
+$env:OLLAMA_MODELS = Join-Path $WorkspaceRoot '.ollama\models'
+$WorkflowDef = 'workflows/definitions/stt_exclusion_notify.yaml'
 if (-not (Test-Path -LiteralPath $WorkflowDef -PathType Leaf)) {
     throw "找不到 workflow：$WorkflowDef"
 }
@@ -412,7 +586,7 @@ $env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
 
 ## 10. Agent Runtime 基本 request
 
-這個 request 不經過 STT，可獨立確認 port 8003 的 `check` route 與 Terminal A 啟動時載入的 workflow model。兩份目前的 workflow YAML 都宣告 `gemini-cheap`，所以這不是 `local-qwen` 測試；`local-qwen` 應使用上一節的 LiteLLM request 驗證：
+這個 request 不經過 STT，可獨立確認 port 8003 的 `check` route 與 Terminal A 啟動時載入的 workflow model。目前兩份 workflow YAML 都宣告 `local-qwen3`，所以回應與 `call_log` 的 model 應對應 `local-qwen3`：
 
 ```powershell
 $agentBody = @{
@@ -434,6 +608,8 @@ Invoke-RestMethod `
 
 第二個長駐 PowerShell（Terminal B：Workers）：
 
+### 11.1 台積電場景（Workers）
+
 ```powershell
 $RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
 if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
@@ -451,11 +627,32 @@ $env:WORKFLOW_DEF_PATH = $WorkflowDef
 .\.venv\Scripts\honcho.exe start -f Procfile.workers -e .env
 ```
 
+### 11.2 除外責任場景（Workers）
+
+```powershell
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+$WorkspaceRoot = Split-Path -Parent $RepoRoot
+Set-Location -LiteralPath $RepoRoot
+$env:PYTHONUTF8 = '1'
+$env:UV_CACHE_DIR = Join-Path $WorkspaceRoot '.uv-cache'
+$WorkflowDef = 'workflows/definitions/stt_exclusion_notify.yaml'
+if (-not (Test-Path -LiteralPath $WorkflowDef -PathType Leaf)) {
+    throw "找不到 workflow：$WorkflowDef"
+}
+$env:WORKFLOW_DEF_PATH = $WorkflowDef
+.\.venv\Scripts\honcho.exe start -f Procfile.workers -e .env
+```
+
 這批 process 包含 Master Agent、`worker-all` 與 `memory-writer`。跑 smoke test 前必須先關閉這批 workers，否則相同 consumer group 可能搶走測試事件。
 
 ## 12. 觸發 workflow
 
 第三個 PowerShell（Terminal C：Client）：
+
+### 12.1 觸發台積電場景
 
 ```powershell
 $RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
@@ -467,6 +664,20 @@ $WorkflowDef = 'workflows/definitions/stt_check_notify.yaml'
 .\.venv\Scripts\python.exe -m orchestrator.trigger `
     --workflow-def $WorkflowDef `
     --payload '{\"audio_ref\":\"samples/gen_tsmc_01.wav\"}'
+```
+
+### 12.2 觸發除外責任場景
+
+```powershell
+$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "找不到 repository：$RepoRoot"
+}
+Set-Location -LiteralPath $RepoRoot
+$WorkflowDef = 'workflows/definitions/stt_exclusion_notify.yaml'
+.\.venv\Scripts\python.exe -m orchestrator.trigger `
+    --workflow-def $WorkflowDef `
+    --payload '{\"audio_ref\":\"samples/gen_policy_01.wav\"}'
 ```
 
 這是目前 VS Code 實際使用的 **Windows PowerShell 5.1** 寫法。JSON 內的 `\"` 不能省略，否則 PowerShell 5.1 呼叫 Python `.exe` 時會移除雙引號，並在 `json.loads()` 出現 `JSONDecodeError: Expecting property name enclosed in double quotes`。若終端機是 PowerShell 7，改用未跳脫形式 `--payload '{"audio_ref":"samples/gen_tsmc_01.wav"}'`。
@@ -518,7 +729,7 @@ ORDER BY created_at;
 3. `orchestrator_runs.status` 最後是 `completed`。
 4. `persistence.history` 顯示各 step 的 checkpoint / state。
 5. `call_log` 可看到對應 agent 的 LLM、tool 或 memory 紀錄。
-6. `stt_check_notify` 的 LLM model name 目前應是 `gemini-cheap`；embedding 仍應是 `local-embed`。
+6. 目前兩份 workflow 的 agent LLM model name 應是 `local-qwen3`；embedding 仍應是 `local-embed`，語音辨識仍由 `breeze-asr` 負責。
 7. `should_notify=false` 時 `notified_log=[]` 是正常結果，而且不應產生通知 LLM / tool call。
 
 2026-08-27 的 `thread_id=e138228b-317b-4cc3-bc75-8496b26e14f2` 已同時符合上述條件，資料庫最終狀態為 `completed`。這只證明單次 event-driven 執行成功；仍不能把它等同於 Windows 登入後自動啟動、背景常駐或異常後自動恢復已完成。
