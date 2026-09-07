@@ -71,7 +71,7 @@ handler 為準。
 Windows / PowerShell 需要先安裝專案相依套件並確認 PostgreSQL 可連線。在 repository 根目錄執行：
 
 ```powershell
-$RepoRoot = 'D:\Projects\multi-agent平台架設\multi-agent-platform'
+$RepoRoot = (Get-Location).Path # VS Code 已開啟 repository 根目錄
 if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
     throw "找不到 repository：$RepoRoot"
 }

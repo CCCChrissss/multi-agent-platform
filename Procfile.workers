@@ -11,7 +11,7 @@
 #      測試結果變得不可信。跑 smoke test 前務必先關掉這個 Procfile。
 #
 # 啟動（Procfile 那批常駐服務要先起來，worker 會打 agent runtime 的 8003）：
-#   uv run honcho -f Procfile.workers start
+#   uv run --no-sync honcho -f Procfile.workers start
 #
 # step 名單是示範場景 stt_check_notify 的，跟
 # workflows/definitions/stt_check_notify.yaml 對應。平台之後支援多 workflow 時，
@@ -26,10 +26,10 @@
 # 跟 worker-all 一起再起一個單 step process，SKIP LOCKED 會自動分工，不會
 # 重複處理同一則命令。
 
-master:          uv run python -m workflows.event_driven_pipeline --role master
-worker-all:      uv run python -m workflows.event_driven_pipeline --role worker --step all
-memory-writer:   uv run python -m workflows.event_driven_pipeline --role memory-writer
+master:          uv run --no-sync python -m workflows.event_driven_pipeline --role master
+worker-all:      uv run --no-sync python -m workflows.event_driven_pipeline --role worker --step all
+memory-writer:   uv run --no-sync python -m workflows.event_driven_pipeline --role memory-writer
 
-# worker-stt:      uv run python -m workflows.event_driven_pipeline --role worker --step stt
-# worker-check:    uv run python -m workflows.event_driven_pipeline --role worker --step check
-# worker-notified: uv run python -m workflows.event_driven_pipeline --role worker --step notified
+# worker-stt:      uv run --no-sync python -m workflows.event_driven_pipeline --role worker --step stt
+# worker-check:    uv run --no-sync python -m workflows.event_driven_pipeline --role worker --step check
+# worker-notified: uv run --no-sync python -m workflows.event_driven_pipeline --role worker --step notified

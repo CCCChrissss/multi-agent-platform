@@ -1,6 +1,6 @@
 # docs/ 文件索引
 
-每份文件在做什麼、什麼時候該看。文件目標是同時支援原作者的 macOS / Bash / Claude Code 流程，以及目前實機的 Windows / PowerShell / Codex 流程。Windows 新使用者先依 [windows-setup.md](windows-setup.md) 操作；需要判斷哪些項目曾在特定日期實機成功時，再看 [current-windows-status.md](current-windows-status.md)。
+每份文件的用途與閱讀入口。人類開發者以 Windows / VS Code 終端機流程為主，不需要 AI 編輯器。macOS 歷史流程另存參考。Windows 新使用者先依 [windows-setup.md](windows-setup.md) 操作；需要判斷哪些項目曾在特定日期實機成功時，再看 [current-windows-status.md](current-windows-status.md)。
 
 文件中的 `donydony228/agent-architecture` issue 連結是移植前的歷史決策來源；新的待辦與
 修改只追蹤在 [本 repository issues](https://github.com/CCCChrissss/multi-agent-platform/issues)。
@@ -10,10 +10,12 @@
 | 文件 | 在講什麼 |
 |---|---|
 | [windows-setup.md](windows-setup.md) | **Windows 唯一詳細操作手冊**：從零安裝、五個服務、workflow 選擇、workers、trigger、停止與排查 |
+| [portability-validation.md](portability-validation.md) | 本次可移植性改動的實際驗證與尚未完成的新機驗收 |
+| [legacy-macos.md](legacy-macos.md) | 從原 README 保留的 macOS / Bash 歷史流程，未重新驗證 |
 | [current-windows-status.md](current-windows-status.md) | 日期化實機驗證快照：曾安裝、曾驗證、當時停止、尚未驗證、模型與 CI 狀態 |
 | [onboarding.md](onboarding.md) | 接手新人看的程式追蹤路徑；沿著已實機完成的 `stt_check_notify` 從 YAML 追到 MCP 與觀測資料 |
-| [setup.md](setup.md) | 雙平台疑難排解：Windows 的 CP950、PostgreSQL、D 槽模型與 Breeze，以及 macOS 原有的 Homebrew / pgvector / Ollama 排錯 |
-| [testing.md](testing.md) | Windows / PowerShell 與 macOS / Bash 的 smoke test 分層、前置條件、本機驗證狀態與上游測試流程 |
+| [setup.md](setup.md) | Windows 的 Python、PostgreSQL、模型、工作流與程序管理排錯；後段保留 macOS 歷史排錯 |
+| [testing.md](testing.md) | 無服務、套件、DB 與端到端測試的分層、前置條件與成功邊界 |
 | [observability.md](observability.md) | 怎麼查一次執行的稽核歷史/執行狀態，Postgres 各張表存什麼、`store` 跟 checkpoint 的差別 |
 
 ## 文件狀態規則

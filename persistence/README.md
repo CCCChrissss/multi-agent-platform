@@ -85,48 +85,19 @@ PK:`(thread_id, checkpoint_ns, checkpoint_id)`。
 
 ## 常用指令
 
-### Windows / PowerShell（目前實機資料庫）
+### Windows / PowerShell
+
+使用 [Windows 主手冊](../docs/windows-setup.md) 建立自己的連線。以下程式讀取本 repository .env：
 
 ```powershell
-# 看有哪些 thread_id 執行過
-psql -d agent_architecture_test -c "select distinct thread_id from checkpoints;"
-
-# 看某個 thread 每一步的 step / source
-psql -d agent_architecture_test -c "
-  select checkpoint_id, metadata->>'step' as step, metadata->>'source' as source
-  from checkpoints
-  where thread_id = '<thread_id>'
-  order by (metadata->>'step')::int;
-"
-
-# 看某個 thread 最新一筆的完整 state
-psql -d agent_architecture_test -c "
-  select checkpoint->'channel_values' as state
-  from checkpoints
-  where thread_id = '<thread_id>'
-  order by (metadata->>'step')::int desc
-  limit 1;
-"
-
-# 看某個 thread 底下所有 LLM/tool 呼叫(含是哪個 node 觸發的)
-psql -d agent_architecture_test -c "
-  select created_at, node, kind, name, is_error, latency_ms
-  from call_log
-  where thread_id = '<thread_id>'
-  order by created_at;
-"
-
-# 用專案內建工具查(state snapshot + call log 一起印,底層就是包上面這些查詢,不用寫 SQL)
-$ThreadId = 'REPLACE_WITH_THREAD_ID'
+$env:PYTHONUTF8 = '1'
+$ThreadId = Read-Host '輸入本次 thread_id'
 .\.venv\Scripts\python.exe -m persistence.history $ThreadId
-
-# 危險：清空所有紀錄。只有明確要丟棄開發資料時才能執行，先確認資料庫名稱。
-psql -d agent_architecture_test -c "
-  truncate checkpoints, checkpoint_writes, checkpoint_blobs, call_log;
-"
 ```
 
-Windows 目前使用 pgAdmin 4 連到 `agent_architecture_test`；`checkpoint` / `metadata` 是 jsonb，GUI 可展開查看。TablePlus、Postico 是原作者的其他 GUI 選項，未在目前 Windows 本機驗證。
+SQL 查詢可在 psql 或自己的資料庫 GUI 執行；連到與 .env 相同的 DB。
+每個 schema 的欄位見上方，事件驅動 run 與排錯順序見 [觀測手冊](../docs/observability.md)。
+表尚未建立時先啟動相應元件，清空資料不屬於一般查詢流程。
 
 ### macOS / Bash（原作者流程）
 

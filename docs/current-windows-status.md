@@ -1,4 +1,7 @@
-# Windows 本機實機狀態
+# 歷史 Windows 主機驗證快照
+
+> 歷史紀錄：本頁的絕對路徑、模型、憑證狀態、版本與 thread ID 僅描述當時主機，不是可直接複製的新機設定。當前操作請用 [Windows 手冊](windows-setup.md)，本次驗證見 [可移植性紀錄](portability-validation.md)。
+> 本頁提到的舊停止腳本行為也只屬於當時版本；目前腳本只停止由同一 checkout 的 `dev.ps1` 所管理的程序。
 
 本文件是特定日期的 Windows / PowerShell 實機驗證快照，用來區分「曾成功」、「當時停止」與「尚未驗證」。它不是安裝或啟動指令的來源；操作方式以 [windows-setup.md](windows-setup.md) 為準，模型、workflow 與權限則分別以實際 YAML／policy 檔案為準。
 
@@ -7,7 +10,7 @@
 - 分支：`codex/windows-local-stack-setup`
 - 目前 HEAD：`e42fc04`
 - 開發工具：Codex Desktop + VS Code + PowerShell
-- 專案目錄：`D:\Projects\multi-agent平台架設\multi-agent-platform`
+- 專案目錄：舊主機的 repository checkout（實際絕對路徑已移除）
 
 ## 狀態用語
 
@@ -24,7 +27,7 @@
 | uv | 已安裝 | 執行檔位於 `C:\Users\User\.local\bin\uv.exe` |
 | PostgreSQL | service 執行中、目前可連線 | PostgreSQL 18.6；本機測試資料庫為 `agent_architecture_test` |
 | pgvector | 已安裝、曾驗證成功 | `vector` extension 版本 0.8.6 |
-| Ollama | 目前停止、曾驗證成功 | port 11434 未監聽；曾指向 `D:\Projects\multi-agent平台架設\.ollama\models` 並成功呼叫 |
+| Ollama | 目前停止、曾驗證成功 | port 11434 未監聽；曾使用舊主機的自訂模型快取並成功呼叫 |
 | `qwen2.5:3b` | 已下載、目前服務停止 | Ollama 啟動時 `/api/tags` 可見，`local-qwen` 曾實際回覆 `OK` |
 | `qwen3:4b-instruct-2507-q4_K_M` | 已下載、目前服務停止 | 2026-09-02 以 Ollama 直接驗證繁體中文與 tool call；`num_ctx=8192` 時完整載入 GPU，實測 `size_vram=3873366343` bytes |
 | `bge-m3` | 已下載、目前服務停止 | Ollama 啟動時 `/api/tags` 可見，`local-embed` 曾實測維度 1024 |
@@ -91,7 +94,7 @@ LiteLLM 的 alias 仍保留在 [gateway/config.yaml](../gateway/config.yaml)：
 - Agent Runtime 的 `check` 基本 request 曾成功使用 `local-qwen`。
 - 2026-08-27 修正 MCP 子行程環境後，Agent Runtime lifespan、8003 與 `/openapi.json` 通過；切回正確 Ollama model 目錄後，`check` request 回 `status=ok`、`mentions_tsmc=true`。
 - `.venv` 已是 `torch 2.13.0+cu132`，`torch.cuda.is_available()` 為 `True`，CUDA tensor 實際運算已通過。
-- Breeze-ASR-25 權重已放在 `D:\Projects\multi-agent平台架設\.hf-cache`，3,086,761,032 bytes 的 `model.safetensors` SHA-256 已驗證為 `c5d952b3bc03ea277209aff0ef5b5c4c055d74449ff794c02d8f4e315fdef6b6`。
+- Breeze-ASR-25 權重曾放在舊主機的自訂 Hugging Face 快取；3,086,761,032 bytes 的 `model.safetensors` SHA-256 已驗證為 `c5d952b3bc03ea277209aff0ef5b5c4c055d74449ff794c02d8f4e315fdef6b6`。
 - `samples/gen_tsmc_01.wav` 直接轉錄成功，輸出「台積電今天股價創新高投資人非常關注」；峰值 CUDA allocated 約 4.09 GiB、reserved 約 4.51 GiB。
 - `should_notify=false` 時，[llm/notify_agent.py](../llm/notify_agent.py) 會在 LLM / tool call 前直接回傳空陣列 `[]`；這是目前程式行為。
 - PostgreSQL 的 `orchestrator_runs`、checkpoint 與 `call_log` 查詢流程曾驗證可用。

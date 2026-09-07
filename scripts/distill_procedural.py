@@ -1,4 +1,4 @@
-"""P2 distiller (docs/knowledge-distillation-plan.md §3): reads a scope's
+r"""P2 distiller (docs/knowledge-distillation-plan.md §3): reads a scope's
 episodic memories -- plus its existing *active* procedural rules, so the
 model doesn't propose duplicates -- and asks an LLM to generalize them into
 candidate procedural rules. Every candidate is written with
@@ -90,7 +90,7 @@ def _render_rules(items: list[SearchItem]) -> str:
     return "\n".join(lines)
 
 
-async def main(scope_arg: str, limit: int) -> list[str]:
+async def main(scope_arg: str, limit: int, *, model: str = _MODEL) -> list[str]:
     """Returns the keys actually written (empty if nothing to distill or the
     model proposed nothing) -- demo/api.py's POST /memory/distill job result
     for the UI; `print()` stays for the CLI path, unchanged."""
@@ -114,7 +114,7 @@ async def main(scope_arg: str, limit: int) -> list[str]:
             return []
 
         user_content = f"{_render_cases(episodic)}\n\n{_render_rules(procedural)}"
-        response = chat_json(_MODEL, _SYSTEM_PROMPT, user_content)
+        response = chat_json(model, _SYSTEM_PROMPT, user_content)
         candidates = response.get("candidates") or []
 
         if not candidates:
@@ -153,5 +153,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--scope", required=True, help="<workflow_name>/<step_name>, e.g. stt_exclusion_notify/check")
     parser.add_argument("--limit", type=int, default=_READ_LIMIT)
+    parser.add_argument("--model", default=_MODEL, help="LiteLLM chat alias; default: gemini-cheap")
     args = parser.parse_args()
-    asyncio.run(main(args.scope, args.limit))
+    asyncio.run(main(args.scope, args.limit, model=args.model))

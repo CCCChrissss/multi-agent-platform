@@ -8,38 +8,41 @@ jobs:
   windows-static-compatibility:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version-file: ".python-version"
       # Dependency-free checks: this job deliberately does not run uv sync.
       - run: python scripts/static_compat_check.py
       - run: python -m services.stt.temp_audio_smoke_test
+      - run: python -B -m scripts.portability_smoke_test
 
   gather-concurrency-smoke-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.11"
-      - run: uv sync
-      - run: uv run python gather_concurrency_smoke_test.py
+          version: "0.12.10"
+      - run: uv sync --locked
+      - run: uv run --no-sync python gather_concurrency_smoke_test.py
 
   mcp-server-smoke-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.11"
-      - run: uv sync
+          version: "0.12.10"
+      - run: uv sync --locked
       # One smoke test per MCP server, straight over stdio (no LLM, no
       # gateway, no other service) -- see docs/testing.md. mcp_servers/memory
       # needs Postgres, which this runner doesn't have, so it's excluded
       # here; run it locally instead (`uv run python -m mcp_servers.memory.smoke_test`).
-      - run: uv run python -m mcp_servers.stt.smoke_test
-      - run: uv run python -m mcp_servers.format_check.smoke_test
-      - run: uv run python -m mcp_servers.lookup.smoke_test
-      - run: uv run python -m mcp_servers.notified.smoke_test
-      - run: uv run python -m mcp_servers.calc.smoke_test
+      - run: uv run --no-sync python -m mcp_servers.stt.smoke_test
+      - run: uv run --no-sync python -m mcp_servers.format_check.smoke_test
+      - run: uv run --no-sync python -m mcp_servers.lookup.smoke_test
+      - run: uv run --no-sync python -m mcp_servers.notified.smoke_test
+      - run: uv run --no-sync python -m mcp_servers.calc.smoke_test

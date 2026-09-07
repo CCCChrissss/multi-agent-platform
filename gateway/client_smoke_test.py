@@ -27,7 +27,10 @@ def _fake_response() -> MagicMock:
 def scenario_response_format_forwarded_when_given() -> None:
     import gateway.client as m
 
-    with patch.object(m._client.chat.completions, "create", return_value=_fake_response()) as create:
+    with (
+        patch.object(m._client.chat.completions, "create", return_value=_fake_response()) as create,
+        patch.object(m, "log_call_sync"),
+    ):
         m.chat_with_tools("model", [{"role": "user", "content": "hi"}], [], response_format={"type": "json_schema"})
 
     assert create.call_args.kwargs.get("response_format") == {"type": "json_schema"}, create.call_args.kwargs
@@ -40,7 +43,10 @@ def scenario_response_format_omitted_when_none() -> None:
     at all when the caller didn't ask for structured output."""
     import gateway.client as m
 
-    with patch.object(m._client.chat.completions, "create", return_value=_fake_response()) as create:
+    with (
+        patch.object(m._client.chat.completions, "create", return_value=_fake_response()) as create,
+        patch.object(m, "log_call_sync"),
+    ):
         m.chat_with_tools("model", [{"role": "user", "content": "hi"}], [])
 
     assert "response_format" not in create.call_args.kwargs, create.call_args.kwargs

@@ -11,7 +11,7 @@ from mcp_servers.base_client import _with_safe_project_env
 
 def main() -> None:
     parent_env = {
-        "UV_CACHE_DIR": r"D:\Projects\multi-agent平台架設\.uv-cache",
+        "UV_CACHE_DIR": r"C:\example workspace\中文\cache",
         "PYTHONUTF8": "1",
         "ANTHROPIC_API_KEY": "must-not-leak",
         "GEMINI_API_KEY": "must-not-leak",
