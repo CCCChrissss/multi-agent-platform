@@ -17,9 +17,11 @@ from types import ModuleType, SimpleNamespace
 
 from scripts.dev_runner import command_for, request_stop, read_state, owner_alive, sanitize_runtime_environment, ROOT
 
-# Load the actual CLI parser without orchestrator.__init__ eagerly importing
-# optional runtime dependencies; no mock copy of the parser is tested.
-parse_args = runpy.run_path(str(ROOT / "orchestrator" / "trigger.py"))["parse_args"]
+# Load the actual trigger module without orchestrator.__init__ eagerly
+# importing optional runtime dependencies; no mock copy of its behavior is
+# tested. The Windows CI job deliberately installs only Python itself.
+TRIGGER_MODULE = runpy.run_path(str(ROOT / "orchestrator" / "trigger.py"))
+parse_args = TRIGGER_MODULE["parse_args"]
 
 
 class PayloadTests(unittest.TestCase):
@@ -59,8 +61,10 @@ class PayloadTests(unittest.TestCase):
 class TriggerEventLoopTests(unittest.TestCase):
     def test_entrypoint_configures_policy_before_creating_event_loop(self):
         probe = "\n".join((
-            "import asyncio, json",
-            "import orchestrator.trigger as trigger",
+            "import asyncio, importlib.util, json",
+            f"spec = importlib.util.spec_from_file_location('trigger_under_test', {str(ROOT / 'orchestrator' / 'trigger.py')!r})",
+            "trigger = importlib.util.module_from_spec(spec)",
+            "spec.loader.exec_module(trigger)",
             "before = type(asyncio.get_event_loop_policy()).__name__",
             "async def probe_main():",
             "    print(json.dumps({'before': before, 'policy': type(asyncio.get_event_loop_policy()).__name__, "
@@ -91,13 +95,6 @@ class TriggerEventLoopTests(unittest.TestCase):
 
 class TriggerPoolTests(unittest.IsolatedAsyncioTestCase):
     async def test_one_shot_trigger_shares_and_always_closes_pool(self):
-        import event_bus.factory
-        import orchestrator.master_agent
-        import orchestrator.run_state
-        import orchestrator.trigger
-        import orchestrator.workflow_def
-        import persistence.pool
-
         pool = SimpleNamespace(close=AsyncMock())
         bus = SimpleNamespace(ensure_schema=AsyncMock())
         workflow = SimpleNamespace(name="test-workflow")
@@ -106,20 +103,45 @@ class TriggerPoolTests(unittest.IsolatedAsyncioTestCase):
         for failure in (None, RuntimeError("publish failed")):
             pool.close.reset_mock()
             start_run = AsyncMock(side_effect=failure)
+
+            event_bus_package = ModuleType("event_bus")
+            event_bus_package.__path__ = []
+            event_bus_factory = ModuleType("event_bus.factory")
+            get_bus = Mock(return_value=bus)
+            event_bus_factory.get_event_bus = get_bus
+
+            master_agent = ModuleType("orchestrator.master_agent")
+            master_agent.start_run = start_run
+            run_state = ModuleType("orchestrator.run_state")
+            run_state.ensure_schema = Mock()
+            workflow_def = ModuleType("orchestrator.workflow_def")
+            workflow_def.load_workflow_def = Mock(return_value=workflow)
+            orchestrator_package = ModuleType("orchestrator")
+            orchestrator_package.__path__ = []
+            orchestrator_package.master_agent = master_agent
+            orchestrator_package.run_state = run_state
+
+            persistence_pool = ModuleType("persistence.pool")
+            persistence_pool.get_shared_pool = AsyncMock(return_value=pool)
+            imports = {
+                "event_bus": event_bus_package,
+                "event_bus.factory": event_bus_factory,
+                "orchestrator": orchestrator_package,
+                "orchestrator.master_agent": master_agent,
+                "orchestrator.run_state": run_state,
+                "orchestrator.workflow_def": workflow_def,
+                "persistence.pool": persistence_pool,
+            }
             with (
                 patch.object(sys, "argv", argv),
-                patch.object(persistence.pool, "get_shared_pool", AsyncMock(return_value=pool)),
-                patch.object(event_bus.factory, "get_event_bus", return_value=bus) as get_bus,
-                patch.object(orchestrator.workflow_def, "load_workflow_def", return_value=workflow),
-                patch.object(orchestrator.run_state, "ensure_schema"),
-                patch.object(orchestrator.master_agent, "start_run", start_run),
+                patch.dict(sys.modules, imports),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 if failure is None:
-                    await orchestrator.trigger.main()
+                    await TRIGGER_MODULE["main"]()
                 else:
                     with self.assertRaisesRegex(RuntimeError, "publish failed"):
-                        await orchestrator.trigger.main()
+                        await TRIGGER_MODULE["main"]()
             get_bus.assert_called_once_with(pool=pool)
             pool.close.assert_awaited_once()
 
