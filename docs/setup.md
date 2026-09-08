@@ -1,7 +1,8 @@
 # 安裝與執行疑難排解
 
 Windows 從 [主手冊](windows-setup.md) 開始。以下命令都在 VS Code 的 repository 根目錄執行。
-先看 `dev.ps1 doctor` 的缺項，再看所啟動 terminal 的錯誤；不要直接套用歷史主機路徑。
+先執行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 doctor`
+查看缺項，再看所啟動 terminal 的錯誤；不要直接套用歷史主機路徑。
 
 ## Python、uv 與 PowerShell
 
@@ -22,17 +23,18 @@ Windows 從 [主手冊](windows-setup.md) 開始。以下命令都在 VS Code �
 
 ## Ollama、模型與快取
 
-- 11434 已占用：可使用原有 Ollama server。只有沒有 server 時才執行 `dev.ps1 ollama`；不要再開第二份。
+- 11434 已占用：可使用原有 Ollama server。只有沒有 server 時才執行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 ollama`；不要再開第二份。
 - 模型找不到：確認 `ollama list` 包含 YAML alias 指向的模型。`OLLAMA_MODELS` 必須在 server 啟動前設定，client 的設定不會更換已執行 server 的儲存位置。
+- exclusion 的 `check agent 逾時（>180s）`：先用 `ollama ps` 確認 `local-qwen3` 實際載入的 context。專案已在 `gateway/config.yaml` 固定 `num_ctx: 8192` 與 `max_tokens: 512`；修改後必須停止並重啟 `services` 才會生效。若 `PROCESSOR` 不再是 `100% GPU`，代表本機顯示記憶體不足，不能只繼續拉長 Agent timeout。
 - 自訂快取請用自己的可寫入絕對路徑，不需要 D 槽。不設定時由工具使用預設位置。
 - LiteLLM `/v1/models` 列出 alias 不代表 provider 可用；依主手冊執行真正的 chat/embedding probe。
-- workflow 已使用本機模型，但蒸餾要求 Gemini：CLI 蒸餾預設仍是 gemini-cheap，可显式用 `--model` 選擇已驗證 alias；UI 預設不變。
+- workflow、CLI 蒸餾與 UI 蒸餾目前都預設使用 `local-qwen3`，不需要雲端 API key；只有顯式以 `--model` 選擇雲端 alias 時才需要對應 key。
 - Breeze 第一次呼叫太久：先完成主手冊的直接預熱，排除下載時間與模型載入問題。GPU/CPU 可用性與 OOM 必須依實際機器判斷。
 
 ## 啟停、工作流與 MCP
 
 - `status` 顯示 running 但請求失敗：它僅代表 supervisor 活著，查看服務 log、ports、runtime OpenAPI 和模型探測。
-- workflow 衝突：services/workers/UI 需選同一個 -Workflow；先 `dev.ps1 stop`，確認 stopped，再重啟。`.env` 中啟用的 WORKFLOW_DEF_PATH 也必須一致。
+- workflow 衝突：services/workers/UI 需選同一個 `-Workflow`；先執行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 stop`，確認 stopped，再重啟。`.env` 中啟用的 `WORKFLOW_DEF_PATH` 也必須一致。
 - 主工作流改 schema：Master/Workers 保留啟動時定義，請重新啟動；UI 單一 agent 的熱載入另有自己的範圍。
 - `uv` MCP 子程序失敗：确认 uv 在 PATH、.venv 已同步，以及自訂 UV_CACHE_DIR 有權限。共用 MCP client 只繼承允許的環境變數，不應為排錯傳遞全部 secrets。
 - managed group 已存在：不要啟動第二份；用相同 checkout 的 stop/status 檢查。PID 與建立時間不符的 stale record 不會被用來停止程序，下一次啟動可回收。
@@ -108,6 +110,11 @@ port 11434 已經被 `brew services` 起的 Ollama 佔用了。二選一：把 [
 #### `curl localhost:4000/v1/models` 連不上
 
 LiteLLM 沒起來或啟動失敗。看 Honcho terminal 裡 `litellm` 前綴的 log——最常見是 `gateway/config.yaml` 有 YAML 語法錯，或 provider 需要的 API key 未設定。
+
+若看到 `Invalid value for '--debug': 'release' is not a valid boolean`，代表父程序的通用
+`DEBUG=release` 被 LiteLLM CLI 誤認為自己的布林選項。使用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 services` 啟動時，
+launcher 會隔離父程序的 `DEBUG`；不要在專案 `.env` 重新宣告 `DEBUG`。舊版 checkout 可先在同一個
+PowerShell 執行 `Remove-Item Env:DEBUG -ErrorAction SilentlyContinue` 再啟動，這只影響目前終端機。
 
 #### 呼叫 Gemini 系列模型噴 401 / API key not valid
 

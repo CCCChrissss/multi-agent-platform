@@ -15,7 +15,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 from types import ModuleType, SimpleNamespace
 
-from scripts.dev_runner import command_for, request_stop, read_state, owner_alive, ROOT
+from scripts.dev_runner import command_for, request_stop, read_state, owner_alive, sanitize_runtime_environment, ROOT
 
 # Load the actual CLI parser without orchestrator.__init__ eagerly importing
 # optional runtime dependencies; no mock copy of the parser is tested.
@@ -47,6 +47,13 @@ class PayloadTests(unittest.TestCase):
         self.assertIn("agents", command)
         self.assertNotIn(".env", command)
         self.assertIn(".run/managed.empty.env", command)
+
+    def test_generic_debug_does_not_leak_into_litellm(self):
+        environment = {"DEBUG": "release", "KEEP": "yes"}
+        sanitize_runtime_environment(environment, {})
+        self.assertEqual(environment, {"KEEP": "yes"})
+        with self.assertRaisesRegex(RuntimeError, "\.env DEBUG is not supported"):
+            sanitize_runtime_environment({}, {"DEBUG": "release"})
 
 
 class TriggerEventLoopTests(unittest.TestCase):
@@ -82,6 +89,41 @@ class TriggerEventLoopTests(unittest.TestCase):
             self.assertEqual(result["policy"], result["before"])
 
 
+class TriggerPoolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_one_shot_trigger_shares_and_always_closes_pool(self):
+        import event_bus.factory
+        import orchestrator.master_agent
+        import orchestrator.run_state
+        import orchestrator.trigger
+        import orchestrator.workflow_def
+        import persistence.pool
+
+        pool = SimpleNamespace(close=AsyncMock())
+        bus = SimpleNamespace(ensure_schema=AsyncMock())
+        workflow = SimpleNamespace(name="test-workflow")
+        argv = ["trigger", "--workflow-def", "test.yaml", "--payload", '{"x": 1}', "--thread-id", "test-thread"]
+
+        for failure in (None, RuntimeError("publish failed")):
+            pool.close.reset_mock()
+            start_run = AsyncMock(side_effect=failure)
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(persistence.pool, "get_shared_pool", AsyncMock(return_value=pool)),
+                patch.object(event_bus.factory, "get_event_bus", return_value=bus) as get_bus,
+                patch.object(orchestrator.workflow_def, "load_workflow_def", return_value=workflow),
+                patch.object(orchestrator.run_state, "ensure_schema"),
+                patch.object(orchestrator.master_agent, "start_run", start_run),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                if failure is None:
+                    await orchestrator.trigger.main()
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "publish failed"):
+                        await orchestrator.trigger.main()
+            get_bus.assert_called_once_with(pool=pool)
+            pool.close.assert_awaited_once()
+
+
 class DistillationTests(unittest.IsolatedAsyncioTestCase):
     async def test_selected_model_and_default_preserve_pending_gate(self):
         @contextlib.asynccontextmanager
@@ -107,7 +149,7 @@ class DistillationTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(sys.modules, modules):
             module = runpy.run_path(str(ROOT / "scripts" / "distill_procedural.py"))
         item = SimpleNamespace(key="case-1", value={"content": {"input": "example", "output": "false"}})
-        for options, expected in (({}, "gemini-cheap"), ({"model": "local-qwen3"}, "local-qwen3")):
+        for options, expected in (({}, "local-qwen3"), ({"model": "local-qwen"}, "local-qwen")):
             recall.side_effect = [[item], []]
             with contextlib.redirect_stdout(io.StringIO()):
                 keys = await module["main"]("example/check", 20, **options)

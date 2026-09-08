@@ -20,8 +20,8 @@
 # docs/knowledge-distillation-plan.md §5 P3 item 1). A "regression" case
 # isn't necessarily one that was failing before the rule -- see
 # seed-drunk_ride_ltc below, added 2026-08-11: it passed under that historical
-# gemini-strong baseline (see docs/knowledge-distillation-plan.md's
-# ceiling-effect note). The current workflow declares gemini-cheap, so
+# historical gemini-strong baseline (see docs/knowledge-distillation-plan.md's
+# ceiling-effect note). The current workflow declares local-qwen3, so
 # current pass rates must be measured again rather than copied from that run.
 # In the historical run,
 # promoting its rule couldn't be measured as an *improvement* -- only as

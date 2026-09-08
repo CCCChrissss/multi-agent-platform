@@ -59,9 +59,9 @@ async def scenario_citation_retry_recovers_via_rebrowse() -> None:
     gateway.call_tool = fake_call_tool
 
     responses = [
-        # Turn 1: model browses the product root.
-        _message(tool_calls=[_tool_call("c1", m._BROWSE_TOOL, {"scope": ["insurance_product", "kgi_ltc"]})]),
-        # Turn 2: verdict cites 第二條, which the loop never actually browsed -> triggers the retry.
+        # The required root browse is performed by the judge before the model
+        # gets a turn. The first model reply cites 第二條, which the loop has
+        # not actually browsed -> triggers the retry.
         _message(content='{"involves_exclusion": true, "matched_articles": ["第二條"], "reason": "ok"}'),
         # Retry turn 1: model does exactly what _CITATION_CONFLICT_PROMPT asks -- re-browses before re-citing.
         _message(tool_calls=[_tool_call("c2", m._BROWSE_TOOL, {"scope": ["insurance_product", "kgi_ltc", "exclusions"]})]),
@@ -83,6 +83,69 @@ async def scenario_citation_retry_recovers_via_rebrowse() -> None:
     assert result["matched_articles"] == ["第二條"], result
     assert not responses, "not all mocked turns were consumed"
     print("[citation_retry_recovers] OK -- retry that actually re-browses before re-citing now succeeds")
+
+
+async def scenario_policy_root_is_browsed_before_first_model_turn() -> None:
+    """A local model may try to answer without calling the browse tool.
+    The judge must still fetch the configured policy root and expose that
+    real tool result to the model before accepting any verdict."""
+    import llm.exclusion_judge as m
+
+    gateway = AsyncMock()
+    gateway.list_openai_tools = AsyncMock(return_value=[{"function": {"name": m._BROWSE_TOOL}}])
+    gateway.call_tool = AsyncMock(
+        return_value=(_browse_result(m._POLICY_ROOT_SCOPE, []), False)
+    )
+
+    def fake_chat_with_tools(model, messages, tools, response_format=None):
+        assert any(
+            message.get("role") == "user" and "系統已先透過 browse_semantic_memory" in message.get("content", "")
+            for message in messages
+        )
+        return _message(content='{"involves_exclusion": false, "matched_articles": [], "reason": "no match"}')
+
+    with (
+        patch.object(m, "inject_procedural", lambda *a, **k: _const("system prompt")),
+        patch("harness.agent_loop.chat_with_tools", fake_chat_with_tools),
+    ):
+        result = await m.judge_exclusion(gateway, "test", store=None, memory_policy=None, tenant="default")
+
+    gateway.call_tool.assert_awaited_once()
+    name, arguments, call_id = gateway.call_tool.await_args.args
+    assert name == m._BROWSE_TOOL
+    assert arguments["scope"] == m._POLICY_ROOT_SCOPE
+    assert call_id.startswith("required-browse-")
+    assert result["matched_articles"] == []
+    print("[required_root_browse] OK -- policy root is fetched before the model can answer")
+
+
+async def scenario_semantic_recall_evidence_is_citable() -> None:
+    """A cited article returned by bounded semantic recall is verified even
+    when the model does not perform an additional leaf browse."""
+    import llm.exclusion_judge as m
+
+    gateway = AsyncMock()
+    gateway.list_openai_tools = AsyncMock(return_value=[{"function": {"name": m._BROWSE_TOOL}}])
+    gateway.call_tool = AsyncMock(return_value=(_browse_result(m._POLICY_ROOT_SCOPE, []), False))
+    recalled = types.SimpleNamespace(
+        namespace=("_global", "semantic", "insurance_product", "kgi_ltc", "exclusions"),
+        key="article_29",
+        value={"content": {"article": "第二十九條", "title": "除外責任", "text": "全文", "applies_to": []}},
+    )
+
+    def fake_chat_with_tools(model, messages, tools, response_format=None):
+        assert any("semantic recall" in message.get("content", "") for message in messages)
+        return _message(content='{"involves_exclusion": true, "matched_articles": ["第二十九條"], "reason": "confirmed"}')
+
+    with (
+        patch.object(m, "inject_procedural", lambda *a, **k: _const("system prompt")),
+        patch.object(m, "recall", AsyncMock(return_value=[recalled])),
+        patch("harness.agent_loop.chat_with_tools", fake_chat_with_tools),
+    ):
+        result = await m.judge_exclusion(gateway, "test", store=object(), memory_policy=object(), tenant="default")
+
+    assert result["matched_articles"] == ["第二十九條"]
+    print("[semantic_evidence] OK -- recalled policy text is accepted as citation evidence")
 
 
 async def scenario_parse_verdict_handles_brace_in_reason() -> None:
@@ -116,6 +179,8 @@ async def scenario_parse_verdict_handles_markdown_fence() -> None:
 
 
 async def main() -> None:
+    await scenario_policy_root_is_browsed_before_first_model_turn()
+    await scenario_semantic_recall_evidence_is_citable()
     await scenario_citation_retry_recovers_via_rebrowse()
     await scenario_parse_verdict_handles_brace_in_reason()
     await scenario_parse_verdict_handles_markdown_fence()

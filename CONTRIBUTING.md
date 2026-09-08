@@ -27,7 +27,7 @@ PR 說明需包含問題、修改後行為、實際執行的驗證，以及尚�
 在根目錄執行：
 
 ```powershell
-.\scripts\dev.ps1 check
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 check
 git diff --check
 git status --short
 ```

@@ -30,13 +30,13 @@ Checkpoint 和 orchestrator_runs 是單次執行狀態，不是長期記憶。
 | run_eval / review_memory | PostgreSQL、LiteLLM、bge-m3，以及選定 check 模型 | call log、eval staging；人工核准／拒絕修改記憶 |
 | workflow 累積案例 | 完整 services / workers | run、event、checkpoint、call log、pending episodic |
 
-蒸餾 CLI 預設 `gemini-cheap`，需要自己的 `GEMINI_API_KEY`。
-可用 `--model` 指定其他已配置的 chat alias；不會修改 YAML 或變更其他功能的預設。
+蒸餾 CLI 預設 `local-qwen3`，透過 Ollama 在地端執行，不需要雲端 API key。
+可用 `--model` 指定其他已配置的 chat alias；若顯式選擇雲端 alias，才需要對應 key。
 使用本機模型不代表候選品質已驗證，仍必須經過評測與人工審核。
 
 `run_eval` / `review_memory` 未指定 `--model` 時，依實際 workflow check 模型；
 目前除外責任 YAML 是 `local-qwen3`。不要把蒸餾模型與被改善的 check 模型混為一談。
-UI 的蒸餾 API 仍呼叫既有預設 `gemini-cheap`；本次新增的模型選項僅為 CLI。
+UI 的蒸餾 API 呼叫同一個 distiller 預設，因此也使用 `local-qwen3`。
 
 ## 3. 準備案例與 baseline
 
@@ -54,19 +54,19 @@ $env:PYTHONUTF8 = '1'
 
 ## 4. 蒸餾候選
 
-使用預設 Gemini：
+使用預設地端 Qwen：
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.distill_procedural --scope stt_exclusion_notify/check --limit 20 --model gemini-cheap
+.\.venv\Scripts\python.exe -m scripts.distill_procedural --scope stt_exclusion_notify/check --limit 20
 ```
 
-已確認本機 alias 可用並願意評估其品質時，可改成：
+也可顯式寫出相同模型：
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.distill_procedural --scope stt_exclusion_notify/check --limit 20 --model local-qwen3
 ```
 
-兩條是替代方案，不必連續執行。預期列出新 pending key，或明確表示沒有 active 案例／沒有候選。
+兩條效果相同，不必連續執行。預期列出新 pending key，或明確表示沒有 active 案例／沒有候選。
 有候選不等於改善成功；不要直接把它改成 active。
 蒸餾不需要 STT、notified、Agent Runtime 或 workers；若使用 dev services，會一起啟動這些服務，亦可依 Procfile 手動單獨啟動 LiteLLM。
 

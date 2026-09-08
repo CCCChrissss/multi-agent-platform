@@ -26,6 +26,7 @@ jobs:
           python-version: "3.11"
           version: "0.12.10"
       - run: uv sync --locked
+      - run: uv run --no-sync python -m scripts.database_setup_smoke_test
       - run: uv run --no-sync python gather_concurrency_smoke_test.py
 
   mcp-server-smoke-tests:

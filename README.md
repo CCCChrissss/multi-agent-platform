@@ -16,25 +16,35 @@
 ```powershell
 uv python install 3.11
 uv sync --locked
-.\scripts\dev.ps1 check
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 check
 ```
 
-接著依主手冊建立自己的 `.env`、PostgreSQL/vector 與模型，再執行 `dev.ps1 doctor`。
+接著建立自己的 `.env`，啟動 PostgreSQL 與 Ollama，再用 repository-owned 指令檢查／初始化資料庫；主要流程不要求 `psql` 在 PATH：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 doctor
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 db-check  # 唯讀，未初始化時預期回報缺項
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 db-init   # 建立 DB、啟用 vector、初始化專案 schema；可重複執行
+```
+
+本手冊的 `dev.ps1` 指令一律以 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`
+啟動，只對該次子程序生效，不需要修改系統或使用者的永久 Execution Policy。
 有了這些前置條件，使用不同 VS Code terminals：
 
 ```powershell
 # Terminal A（已有 Ollama server；沒有時先依主手冊啟動）
-.\scripts\dev.ps1 services -Workflow stt_check_notify
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 services -Workflow stt_check_notify
 # Terminal B，等 services ready
-.\scripts\dev.ps1 workers -Workflow stt_check_notify
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 workers -Workflow stt_check_notify
 # Terminal C
-.\scripts\dev.ps1 trigger -Workflow stt_check_notify
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 trigger -Workflow stt_check_notify
 # 另開 terminal 提供 UI backend
-.\scripts\dev.ps1 ui -Workflow stt_check_notify
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 ui -Workflow stt_check_notify
 ```
 
 以瀏覽器開啟本機 `demo/index.html`。也可用「終端機 → 執行工作」選 `platform:` Tasks。
-完成後 `dev.ps1 stop` 只停止本 checkout 管理的 groups，`dev.ps1 status` 查 supervisor 狀態。
+完成後以 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 stop`
+停止本 checkout 管理的 groups；將最後的 action 改為 `status` 可查 supervisor 狀態。
 已由其他程式管理的 Ollama / PostgreSQL 不由專案 stop 結束。
 
 ## 支援與功能需求
@@ -47,8 +57,8 @@ macOS / Linux 的完整流程未由本版重新驗證；macOS 原流程保存在
 |---|---|
 | 台積電、保單除外責任 workflow | local-qwen3、local-embed、Breeze-ASR-25、PostgreSQL/vector、services/workers |
 | semantic / procedural 記憶 | bge-m3 embedding 與 PostgreSQL/vector |
-| CLI 知識蒸餾 | 預設 gemini-cheap，需要自己的 Gemini key；可顯式指定其他 chat alias |
-| UI 蒸餾 | 仍使用 gemini-cheap 預設；CLI 的模型選項不改變 UI |
+| CLI 知識蒸餾 | 預設 local-qwen3，不需要雲端 API key；可顯式指定其他已配置 chat alias |
+| UI 蒸餾 | 使用同一個 local-qwen3 預設 |
 | notified | 本機 placeholder，沒有真的寄信或發 Slack |
 | 無服務測試 | Python 3.11，不需雲端 key／模型／DB |
 
@@ -68,7 +78,7 @@ stt -> check -> notified
 - **stt**：透過 `MCPGateway` 連上 [mcp_servers/stt](mcp_servers/stt/)（轉錄）與 [mcp_servers/format_check](mcp_servers/format_check/)（格式檢查）兩個 MCP server，透過 LiteLLM Gateway 呼叫 workflow 宣告的 LLM 自行決定要不要先檢查音檔格式、再進行轉錄（[llm/stt_agent.py](llm/stt_agent.py)）。目前 `stt_check_notify` 與 `stt_exclusion_notify` 都宣告 `local-qwen3`；兩者共用相同 agent 邏輯，但 model alias 由各自 YAML 決定。實際轉錄仍由 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（[services/stt/breeze_asr.py](services/stt/breeze_asr.py)）負責，不會因 agent 決策模型切換而被取代。
 - **check**：兩個場景各自一套判斷邏輯，[agents/runtime.py](agents/runtime.py) 的 `/check/run` 路由依啟動時選的 workflow 決定呼叫哪一套（見下方「切換示範 workflow」）：
   - `stt_check_notify`：透過 LiteLLM Gateway 呼叫 LLM（目前宣告 `local-qwen3`）判斷逐字稿是否提到台積電，並用確定性的別名比對當 backstop（[llm/tsmc_judge.py](llm/tsmc_judge.py)）。
-  - `stt_exclusion_notify`：透過 LiteLLM Gateway 呼叫 LLM（目前工作樹宣告 `local-qwen3`）判斷客戶描述的情況是否涉及保單除外責任——不會把保單條款塞進 prompt，而是透過 [`browse_semantic_memory`](mcp_servers/memory/server.py) 這個 MCP tool 自己決定要往下鑽哪個分支，只把讀到過的條文拿來引用（[llm/exclusion_judge.py](llm/exclusion_judge.py)，詳見 [docs/exclusion-scenario-plan.md](docs/exclusion-scenario-plan.md)）。
+  - `stt_exclusion_notify`：透過 LiteLLM Gateway 呼叫 LLM（目前宣告 `local-qwen3`）判斷客戶描述的情況是否涉及保單除外責任。為了讓本機 4B 模型可穩定重現，程式會先在指定保單根目錄做兩路、有界的 semantic recall（除外原因、給付／失能門檻），並實際 browse 根節點；模型仍可用 [`browse_semantic_memory`](mcp_servers/memory/server.py) 補查，只允許引用 recall 或 browse 真正讀到的條文（[llm/exclusion_judge.py](llm/exclusion_judge.py)，詳見 [docs/exclusion-scenario-plan.md](docs/exclusion-scenario-plan.md)）。
 - **notified**：兩個場景共用同一顆 agent，不知道場景邏輯——只收「要不要發、主旨、內容」，透過 `MCPGateway`（[mcp_servers/gateway.py](mcp_servers/gateway.py)）連上 [mcp_servers/notified](mcp_servers/notified/)（Slack / Gmail 兩個 tool，背後打 [services/notified/](services/notified/)）。目前兩份 workflow 都宣告 `local-qwen3`。`should_notify=false` 時會在呼叫 LLM / tool 前直接回傳 `[]`；需要通知時才由模型決定管道。目前 notified service 是本機 placeholder，不會真的對外寄送。
 
 ### 單一 runtime process

@@ -7,6 +7,14 @@ model_list:
     litellm_params:
       model: ollama_chat/qwen3:4b-instruct-2507-q4_K_M
       api_base: http://localhost:11434
+      # Ollama defaults to a 4K context on this machine, which is too small
+      # for the exclusion judge's system prompt plus multi-turn memory browse
+      # results. 8K was verified to remain fully GPU-resident locally.
+      num_ctx: 8192
+      # Workflow steps return either a compact tool call or small JSON object.
+      # Bound runaway generations so the 180s Agent API timeout can remain a
+      # failure guard instead of becoming the normal stopping mechanism.
+      max_tokens: 512
   # Provider aliases remain available independently of which workflow uses
   # them. The active choice belongs to workflows/definitions/*.yaml's
   # per-step `model:` fields; changing an alias here does not switch a
@@ -22,8 +30,8 @@ model_list:
   - model_name: gemini-strong
     litellm_params:
       # Retained as a diagnostic/future alias; current workflow model choices
-      # live in workflows/definitions/*.yaml and use gemini-cheap as of
-      # 2026-08-31. This alias was promoted during the historical
+      # live in workflows/definitions/*.yaml and use local-qwen3. This alias
+      # was promoted during the historical
       # docs/knowledge-distillation-plan.md comparison after gemini-cheap
       # measured 0/5 on drunk_driving_bike vs this model's 15/15.
       # `gemini-3.1-pro` (no suffix) 404s -- confirmed

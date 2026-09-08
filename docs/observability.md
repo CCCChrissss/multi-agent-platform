@@ -116,7 +116,7 @@ WHERE thread_id = '<thread_id>'
 ORDER BY created_at;
 ```
 
-`stt_check_notify` 的 Agent LLM 呼叫目前預期使用 `gemini-cheap`。embedding 仍使用 `local-embed`；兩者角色不同。
+`stt_check_notify` 的 Agent LLM 呼叫目前預期使用 `local-qwen3`。embedding 仍使用 `local-embed`；兩者角色不同。
 
 ## 看即時 process log
 
@@ -153,4 +153,4 @@ checkpoint 以 `thread_id` 描述一次執行；long-term memory 以 `(namespace
 4. 對應 port 是否有 listener。
 5. 第一個 Honcho terminal 中該 process 的 log。
 6. `call_log.is_error=true` 的最後一筆 request / response。
-7. 若卡在 `stt`，先區分是 Gemini 決策呼叫還是 Breeze 工具／權重；若卡在 `check`，優先檢查 4000 / `gemini-cheap` 與 `GEMINI_API_KEY`；若卡在 memory，優先檢查 PostgreSQL / `local-embed`。
+7. 若卡在 `stt`，先區分是 `local-qwen3` 決策呼叫還是 Breeze 工具／權重；若卡在 `check`，優先檢查 4000 / `local-qwen3` 與 Ollama 11434；若卡在 memory，優先檢查 PostgreSQL / `local-embed`。

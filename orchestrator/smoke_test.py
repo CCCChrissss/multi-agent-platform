@@ -308,9 +308,9 @@ async def scenario_deadline_sweep() -> None:
 
 
 async def scenario_worker_crash_recovery() -> None:
-    """Kill an stt worker mid-transcription (the asyncio-task equivalent of
-    `kill -9` -- the claim was already committed to the DB before the
-    handler started, so cancelling mid-handler leaves the dispatch row
+    """Kill an stt worker after its handler has deterministically started
+    (the asyncio-task equivalent of `kill -9` -- the claim was already
+    committed to the DB before the handler started, so cancelling it leaves the dispatch row
     'claimed' exactly like a real crash) and confirm a second worker
     instance reclaims the stuck message once its lease expires and
     completes it for real -- the multi-process equivalent of
@@ -332,8 +332,20 @@ async def scenario_worker_crash_recovery() -> None:
         )
     )
 
-    crasher = asyncio.create_task(run_worker(bus, workflow_def, "stt", handlers["stt"], worker_id="m5-crasher"))
-    await asyncio.sleep(6)  # long enough to have claimed the message and be inside the slow transcribe call
+    handler_started = asyncio.Event()
+
+    async def controlled_crash_handler(_payload: dict) -> dict:
+        # A real warmed-up STT call may finish before an arbitrary sleep.
+        # This barrier proves run_worker has claimed and entered the handler,
+        # then keeps it in-flight until the task is cancelled below.
+        handler_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    crasher = asyncio.create_task(
+        run_worker(bus, workflow_def, "stt", controlled_crash_handler, worker_id="m5-crasher")
+    )
+    await asyncio.wait_for(handler_started.wait(), timeout=10)
     crasher.cancel()
     await _swallow_cancelled(crasher)
     print("[worker_crash_recovery] killed the first stt worker mid-transcription", flush=True)

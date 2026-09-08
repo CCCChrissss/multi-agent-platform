@@ -53,8 +53,7 @@ def main() -> int:
                     check(Path(os.path.expandvars(values[key])).expanduser().is_absolute(), f"{key} override is absolute")
             workflow = values.get("WORKFLOW_DEF_PATH")
             check(not workflow or (ROOT / workflow).is_file(), "WORKFLOW_DEF_PATH unset or file exists")
-            print("[INFO] Gemini key " + ("configured" if values.get("GEMINI_API_KEY") else "not configured") +
-                  "; required for default gemini-cheap distillation, not local-qwen3 workflows")
+            print("[INFO] Local workflows and distillation default to local-qwen3; cloud API keys are optional")
     print("[INFO] No service/model/DB connection tested. Follow docs/windows-setup.md for readiness and end-to-end checks.")
     return 1 if failures else 0
 

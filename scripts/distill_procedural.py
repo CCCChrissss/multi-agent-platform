@@ -21,7 +21,7 @@ Run from the repository root:
     macOS / Bash:
         uv run python -m scripts.distill_procedural --scope stt_exclusion_notify/check --limit 20
 
-Requires PostgreSQL, LiteLLM on port 4000, the configured `gemini-cheap`
+Requires PostgreSQL, LiteLLM on port 4000, the configured `local-qwen3`
 provider, and `local-embed` (LiteLLM -> Ollama/bge-m3). It does not require
 STT, notified, Agent Runtime, or event-driven workers. See
 docs/knowledge-distillation-windows.md for the review order and safety gate.
@@ -42,12 +42,11 @@ from persistence.memory_lifespan import open_agent_memory
 _POLICY_PATH = "mcp_servers/policy.yaml"
 _PRINCIPAL = "distiller"
 # Summarizing already-collected cases into a rule is a much lighter ask than
-# llm/exclusion_judge.py's multi-hop browsing loop -- gemini-cheap is a
-# reasonable starting point here, not the same "worth revisiting" capability
-# concern docs/knowledge-distillation-plan.md's P2-kickoff findings raised
-# for that loop. Revisit if candidate quality turns out to be the bottleneck
-# once a human is actually reviewing these.
-_MODEL = "gemini-cheap"
+# llm/exclusion_judge.py's multi-hop browsing loop. The current offline-first
+# default uses the same local-qwen3 alias as the workflow; the pending status,
+# evaluation and human-review gates remain mandatory because local generation
+# quality is not assumed to match historical cloud-model results.
+_MODEL = "local-qwen3"
 _READ_LIMIT = 20
 _RULE_LIMIT = 200
 """Separate, generous cap for the "already have these rules, don't
@@ -153,6 +152,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--scope", required=True, help="<workflow_name>/<step_name>, e.g. stt_exclusion_notify/check")
     parser.add_argument("--limit", type=int, default=_READ_LIMIT)
-    parser.add_argument("--model", default=_MODEL, help="LiteLLM chat alias; default: gemini-cheap")
+    parser.add_argument("--model", default=_MODEL, help="LiteLLM chat alias; default: local-qwen3")
     args = parser.parse_args()
     asyncio.run(main(args.scope, args.limit, model=args.model))

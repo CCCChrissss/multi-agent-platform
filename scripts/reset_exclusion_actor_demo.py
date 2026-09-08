@@ -1,6 +1,6 @@
 """Resets the DB state written by docs/exclusion-actor-distinction-demo.md's
 demo -- the "misjudge -> distill -> add candidate back -> improve" loop for
-gemini-cheap on the article-29 要保人/被保險人 actor-distinction blind spot.
+the article-29 要保人/被保險人 actor-distinction blind spot.
 Lets the demo be run repeatedly from a clean slate instead of accumulating
 whatever the last run left behind (an approved rule, a staged eval
 candidate, a rejected one still sitting pending, ...).

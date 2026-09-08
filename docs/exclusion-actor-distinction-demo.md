@@ -1,7 +1,7 @@
 # 除外責任「行為人區分」demo 設計與跑法
 
 > [!NOTE]
-> 這是原作者 demo 設計與 macOS / Bash 歷史跑法。Windows 已實際進行 actor-distinction demo 到 candidate staging／procedural review，並確認 `eval` active 與 `default` pending 是不同 tenant 的預期狀態；尚未確認 production approve 與完整回歸結果。2026-09-01 已移除所有雲端 API key，目前無法繼續需要 Gemini 的步驟。Windows 通用流程見 [knowledge-distillation-windows.md](knowledge-distillation-windows.md)，日期化狀態見 [current-windows-status.md](current-windows-status.md)。
+> 這份 demo 保留原作者的歷史實驗結果，但目前 Windows 執行路徑已統一使用地端 `local-qwen3`，不需要雲端 API key。Windows 已實際進行 actor-distinction demo 到 candidate staging／procedural review，並確認 `eval` active 與 `default` pending 是不同 tenant 的預期狀態；尚未確認改用 Qwen 後的 production approve 與完整回歸結果。Windows 通用流程見 [knowledge-distillation-windows.md](knowledge-distillation-windows.md)，日期化狀態見 [current-windows-status.md](current-windows-status.md)。
 
 ## 0. 這份文件在做什麼
 
@@ -50,15 +50,15 @@
 
 expected `involves_exclusion: false`，matched `第二十九條`。
 
-**為什麼不能放進 `exclusion-episodic-cases.md`**：那份文件自己的規則是「episodic 語料不能跟 eval/holdout 逐字稿共用，混用會讓評測分不清模型是真的學會還是背過那句話」。這句 holdout 從設計上就是要留在 episodic 語料**外面**的對照，才能拿來測「還沒種過這個 pattern 的新案例，procedural 規則能不能讓 gemini-cheap 答對」。§4 最後一步驗證通過的話，這句就是要貼進 `evals/check_cases.yaml` 的 `split: regression` 候選之一。
+**為什麼不能放進 `exclusion-episodic-cases.md`**：那份文件自己的規則是「episodic 語料不能跟 eval/holdout 逐字稿共用，混用會讓評測分不清模型是真的學會還是背過那句話」。這句 holdout 從設計上就是要留在 episodic 語料**外面**的對照，才能拿來測「還沒種過這個 pattern 的新案例，procedural 規則能不能讓目前的 `local-qwen3` 答對」。§4 最後一步驗證通過的話，這句就是要貼進 `evals/check_cases.yaml` 的 `split: regression` 候選之一。
 
 ## 3. 背景：已驗證過、現在仍然成立的發現
 
 這一節記錄原始版本 demo（P5 之前）已經實測過、且**不受 P5 影響**的發現——理由跟細節不重複貼，只講結論跟為什麼還算數。
 
-### 3.1 production 模型測不出東西，demo 必須用 gemini-cheap
+### 3.1 歷史 Gemini 模型的 ceiling-effect 對照
 
-用 `seed-policyholder_assault_disability23` 的逐字稿做過歷史比較：`gemini-strong` 對這個案例 5/5 正確——模型本身讀條文夠仔細，這個盲點對它不構成誤判，是跟 `evals/check_cases.yaml` 的 `seed-drunk_ride_ltc` 同一種 ceiling effect。`gemini-cheap` 在無記憶 baseline 下 0/5 全錯，加上當時的 `pending-e9b8205f` 規則後仍是 0/5（規則答非所問）。手寫一條「行為人區分」規則診斷性地疊上去，5/5 全對——證明記憶機制本身有效，缺的只是對的規則內容，不是模型能力上限。**這個 demo 必須明確指定 `gemini-cheap`，才能重現當時要展示的盲點。** `scripts/seed_actor_distinction_demo.py`（§4）已經內建這個 model override；目前 workflow 本身也使用 `gemini-cheap`，但 demo 仍保留明確 override 以避免設定漂移。
+用 `seed-policyholder_assault_disability23` 的逐字稿做過歷史比較：`gemini-strong` 對這個案例 5/5 正確——模型本身讀條文夠仔細，這個盲點對它不構成誤判，是跟 `evals/check_cases.yaml` 的 `seed-drunk_ride_ltc` 同一種 ceiling effect。`gemini-cheap` 在無記憶 baseline 下 0/5 全錯，加上當時的 `pending-e9b8205f` 規則後仍是 0/5（規則答非所問）。手寫一條「行為人區分」規則診斷性地疊上去，5/5 全對——證明記憶機制本身有效，缺的只是對的規則內容，不是模型能力上限。這些數字是歷史 Gemini 對照，不能視為 Qwen 的當前 baseline；目前 `scripts/seed_actor_distinction_demo.py` 與 workflow 都明確使用 `local-qwen3`。
 
 ### 3.2（原 §3.1，**已過期，因 P5 結構性移除**）episodic few-shot 洩漏
 
@@ -99,7 +99,7 @@ uv run python -m scripts.reset_exclusion_actor_demo             # 真的清掉�
 uv run python -m scripts.seed_actor_distinction_demo
 ```
 
-這支腳本用 `gemini-cheap` 實際呼叫 `judge_exclusion()`（§3.1 的理由），把模型當下真正吐出的判斷（預期是錯的：`involves_exclusion=true`）寫進 `default/episodic/stt_exclusion_notify/check`，`status="pending"`。輸出裡的 `WRONG`/`correct` 標記只是提示，不是斷言——模型偶爾可能剛好答對，那也是真實訊號，不用重跑。
+這支腳本用 `local-qwen3` 實際呼叫 `judge_exclusion()`，把模型當下真正吐出的判斷寫進 `default/episodic/stt_exclusion_notify/check`，`status="pending"`。輸出裡的 `WRONG`/`correct` 標記只是提示，不是斷言——Qwen 的當前 baseline 尚未實測，模型可能答對也可能判錯，都應保留為真實訊號交給人審。
 
 **步驟 2（可選，確認 pending 真的看不到）**：這時 `judge_exclusion()` 完全讀不到這兩筆——P5 拔掉了 episodic few-shot，而且就算沒拔，`pending` 狀態本來就對 `recall()` 不可見。可以跳過，直接進步驟 3。
 
@@ -126,7 +126,7 @@ uv run python -m scripts.distill_procedural --scope stt_exclusion_notify/check
 **步驟 5：人審核候選規則——確認規則文字有講「怎麼判」，不是只講「要查什麼」**
 
 ```bash
-uv run python -m scripts.review_memory --scope stt_exclusion_notify/check --model gemini-cheap --key <步驟4印出的key>
+uv run python -m scripts.review_memory --scope stt_exclusion_notify/check --model local-qwen3 --key <步驟4印出的key>
 ```
 
 會印出 `evals/check_cases.yaml` 的 baseline/candidate 對照表，以及這兩筆案例各自的 evidence diagnostic（重跑判斷，看 candidate 有沒有真的把 `involves_exclusion` 從 true 改判成 false）。對照 §3.4 的兩個版本範例：
@@ -144,10 +144,10 @@ approve 之後終端機會印出兩筆 `split: regression` 的 YAML 建議格式
 這是整個 demo 要證明的最終結論：procedural 規則本身有貢獻，不是死記兩筆案例。用 §2.1 的 holdout 逐字稿，比較「只有 `e9b8205f`」vs「`e9b8205f` + 新核准規則」——可以直接跑：
 
 ```bash
-uv run python -m evals.run_eval --repeats 5 --model gemini-cheap
+uv run python -m evals.run_eval --repeats 5 --model local-qwen3
 ```
 
-`--model gemini-cheap` 應明確保留，確保重跑仍使用這個 demo 要測的弱模型；若未指定，`evals/run_eval.py` 會跟隨目前 workflow YAML，而該設定未來可能改變。歷史比較中的 `gemini-strong` 在這個盲點上有 ceiling effect（§3.1），看不出「有沒有規則」的差異。如果步驟 6 已經把 holdout 貼進 `check_cases.yaml`，這支指令會直接把它跑進去、印出通過率；沒貼的話，把 §2.1 的逐字稿暫時加進 `evals/check_cases.yaml`（`split: holdout`）再跑，或參考 `scripts/review_memory.py::_load_evidence_cases`/`_run_case` 的寫法手動組一個一次性腳本呼叫 `judge_exclusion(..., tenant="default")` 五次數 pass rate。歷史預期是新規則核准前誤判 `true`、核准後判對 `false`；目前 Windows 尚未重跑，不能直接沿用這個結果。
+`--model local-qwen3` 應明確保留，確保 baseline 與 candidate 都使用同一個目前地端模型；若未指定，`evals/run_eval.py` 會跟隨目前 workflow YAML。歷史比較中的 Gemini 結果只保留作為對照，不能當成 Qwen 的預期通過率。如果步驟 6 已經把 holdout 貼進 `check_cases.yaml`，這支指令會直接把它跑進去、印出通過率；沒貼的話，把 §2.1 的逐字稿暫時加進 `evals/check_cases.yaml`（`split: holdout`）再跑，或參考 `scripts/review_memory.py::_load_evidence_cases`/`_run_case` 的寫法手動組一個一次性腳本呼叫 `judge_exclusion(..., tenant="default")` 五次數 pass rate。
 
 ## 5. Demo 跑完後如何重置 DB
 

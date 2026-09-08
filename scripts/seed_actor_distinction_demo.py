@@ -3,10 +3,8 @@ the two 要保人/被保險人 actor-distinction cases into episodic memory as a
 genuine live *misjudgment*, not hand-authored already-correct content the
 way scripts/seed_exclusion_episodic_examples.py's corpus is.
 
-Calls the real judge_exclusion() with gemini-cheap (docs/exclusion-actor-
-distinction-demo.md §3 found the historically-tested gemini-strong has a
-ceiling effect that makes this blind spot invisible -- explicit model=,
-same technique as scripts/review_memory.py's --model) against
+Calls the real judge_exclusion() with local-qwen3 (explicit model=, the same
+technique as scripts/review_memory.py's --model) against
 `tenant="default"`. The original 2026-08-11 demo had one active procedural
 rule (`pending-e9b8205f`, the "不同給付項目" cross-article distinction) that
 didn't cover this within-article actor distinction, producing §3's 0/5
@@ -28,7 +26,7 @@ Run from the repository root:
     macOS / Bash:
         uv run python -m scripts.seed_actor_distinction_demo
 
-Requires PostgreSQL, LiteLLM on port 4000, the `gemini-cheap` provider, and
+Requires PostgreSQL, LiteLLM on port 4000, the `local-qwen3` provider, and
 the seeded semantic policy tree. It writes production pending episodic
 records; see docs/exclusion-actor-distinction-demo.md before running it.
 """
@@ -48,7 +46,7 @@ from persistence.memory_lifespan import open_agent_memory
 
 _POLICY_PATH = "mcp_servers/policy.yaml"
 _SCOPE = ("stt_exclusion_notify", "check")
-_MODEL = "gemini-cheap"  # explicit demo model; see the historical ceiling-effect comparison in the module docstring
+_MODEL = "local-qwen3"  # explicit demo model; see the historical ceiling-effect comparison in the module docstring
 
 _CASES = [
     (

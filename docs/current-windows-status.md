@@ -56,10 +56,10 @@ LiteLLM 的 alias 仍保留在 [gateway/config.yaml](../gateway/config.yaml)：
 
 | Workflow | `stt` | `check` | `notified` | 目前判定 |
 |---|---|---|---|---|
-| [stt_check_notify.yaml](../workflows/definitions/stt_check_notify.yaml) | `gemini-cheap` | `gemini-cheap` | `gemini-cheap` | 已在乾淨重啟後完成一次完整 event-driven 執行 |
-| [stt_exclusion_notify.yaml](../workflows/definitions/stt_exclusion_notify.yaml) | `gemini-cheap` | `gemini-cheap` | `gemini-cheap` | 已完成一次 event-driven 執行，三個 step 與 memory writer 均留下紀錄 |
+| [stt_check_notify.yaml](../workflows/definitions/stt_check_notify.yaml) | `local-qwen3` | `local-qwen3` | `local-qwen3` | 目前宣告值；歷史 Gemini 完整執行紀錄見下方 |
+| [stt_exclusion_notify.yaml](../workflows/definitions/stt_exclusion_notify.yaml) | `local-qwen3` | `local-qwen3` | `local-qwen3` | 目前宣告值；歷史 Gemini 完整執行紀錄見下方 |
 
-`local-embed` 仍只負責 embedding，`breeze-asr` 仍只負責語音辨識；兩者不應改成 `local-qwen` 或 `local-qwen3`。目前兩份 workflow 仍宣告 `gemini-cheap`，新增 alias 不會自動切換 workflow。
+`local-embed` 仍只負責 embedding，`breeze-asr` 仍只負責語音辨識；兩者不應改成 `local-qwen` 或 `local-qwen3`。目前兩份 workflow 的三個 step 均宣告 `local-qwen3`；雲端 aliases 僅保留為選用接口。
 
 ## 已完成的單次 workflow 里程碑與剩餘範圍
 
@@ -71,7 +71,7 @@ LiteLLM 的 alias 仍保留在 [gateway/config.yaml](../gateway/config.yaml)：
 
 因此，目前可以宣稱 **兩份示範 workflow 都各自完成過單次 event-driven 執行**；不能延伸宣稱長時間常駐穩定性或知識蒸餾 Windows 全鏈已完成。
 
-上述 workflow 成功紀錄是在 Gemini key 可用時取得。2026-09-01 移除所有雲端 API key 後，兩份 workflow 因三個 step 都宣告 `gemini-cheap`，目前都不能重新完整執行；這不會抹除歷史成功紀錄。
+上述兩筆 workflow 成功紀錄是在 Gemini key 可用時取得，這不會抹除歷史結果。目前 workflow 與知識蒸餾的預設已改為 `local-qwen3`，在地端路徑不需要雲端 API key；實際 Qwen 結果仍應以新的 run 及 call log 判定，不能沿用歷史 Gemini 數字。
 
 ## 長期記憶與知識蒸餾歷史快照
 

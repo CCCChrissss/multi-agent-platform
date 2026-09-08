@@ -53,9 +53,9 @@ true` -- content diverges from what the distiller actually produced, and
 
 Run from the repository root:
     Windows PowerShell:
-        .\.venv\Scripts\python.exe -m scripts.review_memory --scope stt_exclusion_notify/check --repeats 3 [--model gemini-cheap] [--key pending-...]
+        .\.venv\Scripts\python.exe -m scripts.review_memory --scope stt_exclusion_notify/check --repeats 3 [--model local-qwen3] [--key pending-...]
     macOS / Bash:
-        uv run python -m scripts.review_memory --scope stt_exclusion_notify/check --repeats 3 [--model gemini-cheap] [--key pending-...]
+        uv run python -m scripts.review_memory --scope stt_exclusion_notify/check --repeats 3 [--model local-qwen3] [--key pending-...]
 
 Requires PostgreSQL, LiteLLM on port 4000, the selected evaluation model,
 and `local-embed` (LiteLLM -> Ollama/bge-m3). It does not require STT,

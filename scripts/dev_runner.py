@@ -24,6 +24,21 @@ ROOT = Path(__file__).resolve().parents[1]
 GROUPS = ("ollama", "services", "workers", "ui")
 
 
+def sanitize_runtime_environment(environment: dict[str, str], configured: dict) -> None:
+    """Keep a host-wide generic DEBUG value from becoming LiteLLM --debug.
+
+    Click treats DEBUG as the environment form of LiteLLM's boolean option.
+    Values used by unrelated software (for example ``release``) therefore
+    make the proxy exit before startup.  Project configuration must use a
+    component-specific setting instead of this ambiguous global name.
+    """
+    if configured.get("DEBUG") is not None:
+        raise RuntimeError(
+            ".env DEBUG is not supported because LiteLLM treats it as a boolean --debug option; remove it"
+        )
+    environment.pop("DEBUG", None)
+
+
 def read_state(root: Path, group: str) -> dict | None:
     path = root / ".run" / f"{group}.json"
     if not path.exists():
@@ -177,6 +192,7 @@ def main() -> int:
     if not env_path.exists():
         raise RuntimeError("Missing .env; copy .env.example and configure your own database first")
     values = dotenv_values(env_path, encoding="utf-8")
+    sanitize_runtime_environment(os.environ, values)
     workflow = f"workflows/definitions/{args.workflow}.yaml"
     declared = values.get("WORKFLOW_DEF_PATH")
     if declared and (ROOT / declared).resolve() != (ROOT / workflow).resolve():

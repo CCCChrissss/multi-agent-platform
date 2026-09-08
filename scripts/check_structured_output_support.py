@@ -33,10 +33,10 @@ raw_decode() from the first `{` when a bare parse fails, so this now prints
 [OK] for claude-haiku too. Re-run this if a model in gateway/config.yaml
 changes again.
 
-2026-08-31 current state: workflow YAML files declare `gemini-cheap` again
-for the Windows-local demo path. The 2026-08-17 paragraph above is retained
-as provider-compatibility history, not a statement of the current workflow
-selection; aliases remain independently available in gateway/config.yaml.
+The current workflow YAML files declare `local-qwen3` for the offline-first
+Windows path. The provider comparisons above are retained as compatibility
+history, not as statements of the current workflow selection; cloud aliases
+remain independently available in gateway/config.yaml.
 
 Note: this script calls the OpenAI SDK directly against the gateway, not
 through gateway/client.py::chat_with_tools() -- which is why it caught real

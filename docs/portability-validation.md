@@ -5,7 +5,7 @@
 
 ## 已執行
 
-- `dev.ps1 check` 已在 Windows PowerShell 5.1 與 PowerShell 7.6.5 從 repository 外部目錄執行成功。
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <repo>\scripts\dev.ps1 check` 已在 Windows PowerShell 5.1 與 PowerShell 7.6.5 從 repository 外部目錄執行成功。
 - 靜態檢查：175 個 UTF-8 文字檔、123 個 Python AST、2 個 TOML、5 個 JSON、568 個本機 Markdown links、6 個 workflow model references、13 個音檔標頭均通過。
 - 暫存音檔 smoke test 通過。
 - 7 個 portability tests 通過：JSON 檔案／BOM／中文空白路徑、無效輸入、指定蒸餾模型與 pending gate、managed services 不含共用 Ollama、停止 preview、PID 建立時間核對、正常／意外結束時的子孫程序清理，以及保留無關程序。
@@ -17,7 +17,7 @@
 
 驗證期間發現通用 `python` 指令可能是 uv 自動同步代理；舊版啟動器呼叫它時意外建立了 `.venv`。啟動器已改用 `uv python find 3.11` 解析明確的直譯器，使 `doctor`、`check`、`status`、`stop` 在 fresh checkout 保持唯讀。驗證結束後會移除該環境，並再次確認 `check` 不會重建它。沙箱帳號直接使用原本的 `python` trampoline 時收到 permission denied，因此不把該次失敗歸類為專案功能通過；實際使用者權限下的 PowerShell 5.1／7 check 已另行通過。
 
-最終 fresh 狀態再次執行 `dev.ps1 check` 與 `dev.ps1 doctor`：兩者均未建立 `.venv` 或 `.run`；check 全數通過。doctor 偵測到本機已有被 Git 忽略的 `.env`，但在套件尚未安裝時不解析其內容，並正確列出 `.venv` 與 distributions 尚未準備完成。
+最終 fresh 狀態再次以上述 Bypass 形式執行 `check` 與 `doctor`：兩者均未建立 `.venv` 或 `.run`；check 全數通過。doctor 偵測到本機已有被 Git 忽略的 `.env`，但在套件尚未安裝時不解析其內容，並正確列出 `.venv` 與 distributions 尚未準備完成。
 
 ## 尚未驗證
 

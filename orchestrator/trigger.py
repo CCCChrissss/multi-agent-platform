@@ -50,17 +50,25 @@ async def main() -> None:
     from event_bus.factory import get_event_bus
     from orchestrator import master_agent, run_state
     from orchestrator.workflow_def import load_workflow_def
+    from persistence.pool import get_shared_pool
 
     workflow_def = load_workflow_def(args.workflow_def)
     payload = args.payload
     thread_id = args.thread_id or str(uuid.uuid4())
 
     run_state.ensure_schema()
-    bus = get_event_bus()
-    await bus.ensure_schema()
-
-    await master_agent.start_run(bus, workflow_def, thread_id, payload)
-    print(f"started run thread_id={thread_id} workflow={workflow_def.name}", flush=True)
+    pool = await get_shared_pool()
+    bus = get_event_bus(pool=pool)
+    try:
+        await bus.ensure_schema()
+        await master_agent.start_run(bus, workflow_def, thread_id, payload)
+        print(f"started run thread_id={thread_id} workflow={workflow_def.name}", flush=True)
+    finally:
+        # This is a one-shot CLI. Explicitly close the shared pool before
+        # asyncio.run() tears its loop down; otherwise psycopg_pool's
+        # min-size background worker can emit a misleading late
+        # "error connecting in 'pool-*'" after the run was already created.
+        await pool.close()
 
 
 def run() -> None:

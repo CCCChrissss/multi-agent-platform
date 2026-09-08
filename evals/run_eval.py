@@ -33,9 +33,9 @@ model declared in workflows/definitions/stt_exclusion_notify.yaml.
 
 Run from the repository root:
     Windows PowerShell:
-        .\.venv\Scripts\python.exe -m evals.run_eval --repeats 3 --tenant default [--model gemini-strong]
+        .\.venv\Scripts\python.exe -m evals.run_eval --repeats 3 --tenant default [--model local-qwen3]
     macOS / Bash:
-        uv run python -m evals.run_eval --repeats 3 --tenant default [--model gemini-strong]
+        uv run python -m evals.run_eval --repeats 3 --tenant default [--model local-qwen3]
 
 Requires PostgreSQL, LiteLLM on port 4000, the selected model provider, and
 a seeded policy tree (`scripts.seed_insurance_memory`). It does not require

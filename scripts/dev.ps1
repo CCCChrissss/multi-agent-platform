@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('doctor', 'check', 'ollama', 'services', 'workers', 'ui', 'trigger', 'stop', 'status')]
+    [ValidateSet('doctor', 'check', 'db-check', 'db-init', 'ollama', 'services', 'workers', 'ui', 'trigger', 'stop', 'status')]
     [string]$Action = 'doctor',
     [ValidateSet('stt_check_notify', 'stt_exclusion_notify')]
     [string]$Workflow = 'stt_check_notify',
@@ -38,6 +38,9 @@ try {
             & $pythonPath -B -m $module
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         }
+    } elseif ($Action -in @('db-check', 'db-init')) {
+        $databaseAction = if ($Action -eq 'db-init') { 'init' } else { 'check' }
+        & $pythonPath -B -m scripts.database_setup $databaseAction
     } else {
         $runnerArgs = @('-B', '-m', 'scripts.dev_runner', $Action, '--workflow', $Workflow)
         if ($Preview) { $runnerArgs += '--preview' }
